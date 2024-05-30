@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-var VERSION string = "1.0.0"
+var VERSION string = "1.0.1"
 var DEBUG bool = false
 var SFDLPassword string = "mlcboard.com"
 var DestinationDownloadPath string
@@ -114,6 +114,10 @@ func StartTango(sfdl_file string) {
 		}
 	}
 
+	if len(Server_File) < MaxConcurrentDownloads {
+		MaxConcurrentDownloads = len(Server_File)
+	}
+
 	fmt.Printf("Loading %d files (%s) using %d threads!\n", len(Server_File), FormatBytes(Download_Size), MaxConcurrentDownloads)
 
 	err2 := StartFTPDownloads()
@@ -139,8 +143,6 @@ func StartTango(sfdl_file string) {
 	FillSFDLFilesArray(dirPath)
 
 	time.Sleep(2 * time.Second)
-
-	fmt.Println("SFDL_Files: ", SFDL_Files)
 
 	if len(SFDL_Files) > 0 {
 		next_sfdl_file := SFDL_Files[0]

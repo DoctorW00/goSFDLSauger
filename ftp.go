@@ -41,7 +41,6 @@ func GetFTPIndex(ftp_path string) error {
 		fmt.Println("Error: FTP Server: ", err)
 		return err
 	}
-	defer ftpClient.Quit()
 
 	err = ftpClient.Login(Server_User, Server_Pass)
 	if err != nil {
@@ -94,9 +93,9 @@ func StartFTPDownloads() error {
 	var wg sync.WaitGroup
 
 	for i := 0; i < MaxConcurrentDownloads; i++ {
+		wg.Add(1)
 		go func() {
 			for filename := range downloadQueue {
-				wg.Add(1)
 				err := downloadFile(filename, DestinationDownloadPath, p)
 				if err != nil {
 					fmt.Printf("Error loading file %s: %v\n", returnFilePathWithoutBytes(filename), err)
@@ -122,7 +121,6 @@ func downloadFile(filename string, downloadDirectory string, p *mpb.Progress) er
 	if err != nil {
 		return err
 	}
-	defer ftpClient.Quit()
 
 	err = ftpClient.Login(Server_User, Server_Pass)
 	if err != nil {
@@ -181,6 +179,7 @@ func downloadFile(filename string, downloadDirectory string, p *mpb.Progress) er
 		return err
 	}
 
+	defer ftpClient.Quit()
 	return nil
 }
 
