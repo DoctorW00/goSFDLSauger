@@ -6,7 +6,6 @@ import (
 	"github.com/vbauerster/mpb"
 	"github.com/vbauerster/mpb/decor"
 	"io"
-	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -64,6 +63,20 @@ func GetFTPIndex(ftp_path string) error {
 	return nil
 }
 
+func sanitizePath(path string) string {
+	replacements := map[string]string{
+		"[": "%5B",
+		"]": "%5D",
+		" ": "%20",
+		"(": "%28",
+		")": "%29",
+	}
+	for old, new := range replacements {
+		path = strings.ReplaceAll(path, old, new)
+	}
+	return path
+}
+
 func listFilesRecursive(ftpClient *ftp.ServerConn, path string, fileList *[]string) error {
 	entries, err := ftpClient.List(path)
 	if err != nil {
@@ -75,7 +88,9 @@ func listFilesRecursive(ftpClient *ftp.ServerConn, path string, fileList *[]stri
 			fileString := path + entry.Name + ";;;" + strconv.FormatUint(entry.Size, 10)
 			*fileList = append(*fileList, fileString)
 		} else if entry.Type == ftp.EntryTypeFolder {
-			err := listFilesRecursive(ftpClient, RemoveDuplicateSlashes(url.PathEscape(path+entry.Name+"/")), fileList)
+			newPath := RemoveDuplicateSlashes(path + entry.Name + "/")
+			newPath = sanitizePath(newPath)
+			err := listFilesRecursive(ftpClient, newPath, fileList)
 			if err != nil {
 				return err
 			}
@@ -95,12 +110,12 @@ func StartFTPDownloads() error {
 	for i := 0; i < MaxConcurrentDownloads; i++ {
 		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			for filename := range downloadQueue {
 				err := downloadFile(filename, DestinationDownloadPath, p)
 				if err != nil {
 					fmt.Printf("Error loading file %s: %v\n", returnFilePathWithoutBytes(filename), err)
 				}
-				wg.Done()
 			}
 		}()
 	}
