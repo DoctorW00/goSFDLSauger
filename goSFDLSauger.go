@@ -7,11 +7,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
 
-var VERSION string = "1.0.2"
+var VERSION string = "1.0.4"
 var DEBUG bool = false
 var SFDLPassword string = "mlcboard.com"
 var DestinationDownloadPath string
@@ -118,6 +119,8 @@ func StartTango(sfdl_file string) {
 		MaxConcurrentDownloads = len(Server_File)
 	}
 
+	startTime := time.Now()
+
 	fmt.Printf("Loading %d files (%s) using %d threads!\n", len(Server_File), FormatBytes(Download_Size), MaxConcurrentDownloads)
 
 	err2 := StartFTPDownloads()
@@ -126,9 +129,34 @@ func StartTango(sfdl_file string) {
 		return
 	}
 
-	time.Sleep(2 * time.Second)
+	stopTime := time.Now()
 
-	fmt.Println("Moving SFDL file to download path ...")
+	time.Sleep(3)
+
+	secondsLoaded := int(stopTime.Sub(startTime).Seconds())
+	timeLoaded := formatDuration(secondsLoaded)
+
+	fmt.Printf("Loaded %d files (%s) in %s\n", len(Server_File), FormatBytes(Download_Size), timeLoaded)
+	fmt.Println("Creating speedreport ...")
+
+	speed := FormatBytes(Download_Size / uint64(secondsLoaded))
+
+	speedreportText := []string{
+		"[B]" + Server_Name + "[/B]",
+		"[HR][/HR]",
+		"Upper: " + Server_Uppa,
+		"Loaded " + strconv.Itoa(len(Server_File)) + " file(s) (" + FormatBytes(Download_Size) + ") in " + timeLoaded,
+		"Speed: " + speed + "/s",
+		"Threads used: " + strconv.Itoa(MaxConcurrentDownloads),
+		"[I][SIZE=1]goSFDLSauger v" + VERSION + "[/SIZE][/I]",
+	}
+
+	errSpeed := createSpeedReport(RemoveDuplicateSlashes(DestinationDownloadPath+"/"+Server_Name+"/speedreport.txt"), speedreportText)
+	if errSpeed != nil {
+		fmt.Printf("Error creating speedreport file: %v\n", errSpeed)
+	}
+
+	fmt.Print("Moving SFDL file to download path ...")
 	dirPath := filepath.Dir(sfdl_file)
 	sfdl_from := sfdl_file
 	sfdl_to := RemoveDuplicateSlashes(DestinationDownloadPath + "/" + Server_Name + "/" + filepath.Base(sfdl_file))
@@ -138,11 +166,7 @@ func StartTango(sfdl_file string) {
 		return
 	}
 
-	time.Sleep(2 * time.Second)
-
 	FillSFDLFilesArray(dirPath)
-
-	time.Sleep(2 * time.Second)
 
 	if len(SFDL_Files) > 0 {
 		next_sfdl_file := SFDL_Files[0]
@@ -203,4 +227,56 @@ func FillSFDLFilesArray(sfdl_files_path string) {
 			SFDL_Files = append(SFDL_Files, entry.Name())
 		}
 	}
+}
+
+func formatDuration(seconds int) string {
+	if seconds < 0 {
+		return "minus time"
+	}
+	days := seconds / (60 * 60 * 24)
+	seconds %= 60 * 60 * 24
+	hours := seconds / (60 * 60)
+	seconds %= 60 * 60
+	minutes := seconds / 60
+	seconds %= 60
+	parts := []string{}
+	if days > 0 {
+		parts = append(parts, fmt.Sprintf("%d days", days))
+	}
+	if hours > 0 {
+		parts = append(parts, fmt.Sprintf("%d hours", hours))
+	}
+	if minutes > 0 {
+		parts = append(parts, fmt.Sprintf("%d minutes", minutes))
+	}
+	if seconds > 0 {
+		parts = append(parts, fmt.Sprintf("%d seconds", seconds))
+	}
+	return join(parts, ", ")
+}
+
+func join(parts []string, sep string) string {
+	switch len(parts) {
+	case 0:
+		return ""
+	case 1:
+		return parts[0]
+	default:
+		return parts[0] + sep + join(parts[1:], sep)
+	}
+}
+
+func createSpeedReport(filePath string, lines []string) error {
+	file, err := os.Create(filePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	for _, line := range lines {
+		_, err := file.WriteString(line + "\n")
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }

@@ -2,9 +2,6 @@ package main
 
 import (
 	"fmt"
-	"github.com/jlaffaye/ftp"
-	"github.com/vbauerster/mpb"
-	"github.com/vbauerster/mpb/decor"
 	"io"
 	"os"
 	"path"
@@ -12,6 +9,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/jlaffaye/ftp"
+	"github.com/vbauerster/mpb/v8"
+	"github.com/vbauerster/mpb/v8/decor"
 )
 
 type ProgressFile struct {
@@ -141,6 +142,7 @@ func downloadFile(filename string, downloadDirectory string, p *mpb.Progress) er
 	if err != nil {
 		return err
 	}
+	defer ftpClient.Quit()
 
 	fileSize := returnFileSizeInUnit64(filename)
 
@@ -164,37 +166,71 @@ func downloadFile(filename string, downloadDirectory string, p *mpb.Progress) er
 		return err
 	}
 
-	localFile, err := os.Create(fullLocalDownloadFilePath)
-	if err != nil {
-		return err
+	var localFile *os.File
+	var downloadedSize int64
+
+	if _, err := os.Stat(fullLocalDownloadFilePath); err == nil {
+		localFile, err = os.OpenFile(fullLocalDownloadFilePath, os.O_APPEND|os.O_WRONLY, os.ModePerm)
+		if err != nil {
+			return err
+		}
+		downloadedSize, err = localFile.Seek(0, io.SeekEnd)
+		if err != nil {
+			return err
+		}
+	} else {
+		localFile, err = os.Create(fullLocalDownloadFilePath)
+		if err != nil {
+			return err
+		}
+		downloadedSize = 0
 	}
 	defer localFile.Close()
 
-	remoteFile, err := ftpClient.Retr(returnFilePathWithoutBytes(filename))
-	if err != nil {
-		return err
+	if DEBUG {
+		fmt.Printf("downloadedSize: %d\n", downloadedSize)
+		fmt.Printf("fileSize: %d\n", fileSize)
 	}
-	defer remoteFile.Close()
+
+	var remoteFile *ftp.Response
+	if downloadedSize < int64(fileSize) {
+		remoteFile, err = ftpClient.RetrFrom(returnFilePathWithoutBytes(filename), uint64(downloadedSize))
+		if err != nil {
+			return err
+		}
+		defer remoteFile.Close()
+	}
 
 	bar := p.AddBar(int64(fileSize),
-		mpb.PrependDecorators(decor.Name(path.Base(returnFilePathWithoutBytes(filename))), decor.AverageSpeed(decor.UnitKB, "(% .2f)", decor.WCSyncSpace)),
-		mpb.AppendDecorators(decor.Percentage(decor.WCSyncWidthR), decor.CountersKiloByte(" [%d/%d]", decor.WCSyncWidth)),
+		mpb.PrependDecorators(
+			decor.Name(path.Base(returnFilePathWithoutBytes(filename))),
+			// decor.AverageSpeed(decor.UnitKB, "(% .2f)", decor.WCSyncSpace),
+		),
+		mpb.AppendDecorators(
+			decor.Counters(decor.SizeB1000(0), "[% .2f/% .2f]", decor.WCSyncSpace),
+			decor.OnComplete(decor.NewPercentage("%d", decor.WCSyncSpace), "done"),
+		),
 	)
 
 	progressWriter := &progressWriter{
 		writer:     localFile,
 		total:      fileSize,
-		downloaded: 0,
+		downloaded: uint64(downloadedSize),
 		filename:   returnFilePathWithoutBytes(filename),
 		bar:        bar,
 	}
 
-	_, err = io.Copy(progressWriter, remoteFile)
-	if err != nil {
-		return err
+	if downloadedSize < int64(fileSize) {
+		progressWriter.bar.SetCurrent(downloadedSize)
+		_, err = io.Copy(progressWriter, remoteFile)
+		if err != nil {
+			return err
+		}
+	} else {
+		bar.SetTotal(int64(fileSize), true)
+		progressWriter.bar.SetCurrent(int64(fileSize))
 	}
 
-	defer ftpClient.Quit()
 	return nil
 }
 
