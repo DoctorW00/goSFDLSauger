@@ -12,13 +12,14 @@ import (
 	"time"
 )
 
-var VERSION string = "1.0.4"
+var VERSION string = "1.1.0"
 var DEBUG bool = false
 var SFDLPassword string = "mlcboard.com"
 var DestinationDownloadPath string
 var MaxConcurrentDownloads int = 3
 var Download_Size uint64
 var SFDL_Files []string
+var UseUNRARUnZIP bool = true
 
 func main() {
 	clearConsole()
@@ -29,6 +30,7 @@ func main() {
 	download_path := flag.String("d", "", "Download Path")
 	sfdl_password := flag.String("p", "", "SFDL Password")
 	max_threds := flag.Int("t", 3, "Max. Download Threads")
+	useUnRARUnZip := flag.Bool("u", true, "Use UnRAR / UnZIP")
 
 	flag.Parse()
 
@@ -73,6 +75,12 @@ func main() {
 
 	if *max_threds > 0 {
 		MaxConcurrentDownloads = *max_threds
+	}
+
+	if *useUnRARUnZip {
+		UseUNRARUnZIP = true
+	} else {
+		UseUNRARUnZIP = false
 	}
 
 	if errors > 0 {
@@ -148,7 +156,9 @@ func StartTango(sfdl_file string) {
 		"Loaded " + strconv.Itoa(len(Server_File)) + " file(s) (" + FormatBytes(Download_Size) + ") in " + timeLoaded,
 		"Speed: " + speed + "/s",
 		"Threads used: " + strconv.Itoa(MaxConcurrentDownloads),
-		"[I][SIZE=1]goSFDLSauger v" + VERSION + "[/SIZE][/I]",
+		"[HR][/HR]",
+		" ",
+		"[URL=\"https://mlcboard.com/forum/showthread.php?612810\"][I][SIZE=1]goSFDLSauger v" + VERSION + "[/SIZE][/I][/URL]",
 	}
 
 	errSpeed := createSpeedReport(RemoveDuplicateSlashes(DestinationDownloadPath+"/"+Server_Name+"/speedreport.txt"), speedreportText)
@@ -164,6 +174,12 @@ func StartTango(sfdl_file string) {
 	if err3 != nil {
 		fmt.Println("Error moving SFDL file! ", err)
 		return
+	}
+
+	if UseUNRARUnZIP {
+		fmt.Print("Unpacking ZIP and RAR files ...")
+		dir := RemoveDuplicateSlashes(DestinationDownloadPath + "/" + Server_Name + "/")
+		MrUnpacker(dir, dir)
 	}
 
 	FillSFDLFilesArray(dirPath)
