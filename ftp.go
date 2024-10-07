@@ -79,7 +79,11 @@ func sanitizePath(path string) string {
 }
 
 func listFilesRecursive(ftpClient *ftp.ServerConn, path string, fileList *[]string) error {
-	entries, err := ftpClient.List(path)
+	err := ftpClient.ChangeDir(path)
+	if err != nil {
+		return err
+	}
+	entries, err := ftpClient.List("")
 	if err != nil {
 		return err
 	}
