@@ -65,6 +65,25 @@ func deleteFiles(files []string) error {
 	return nil
 }
 
+func GetAllSubs(root string) ([]string, error) {
+	var folders []string
+
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			folders = append(folders, path)
+		}
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+	return folders, nil
+}
+
 func Unzip(src string, dest string) error {
 	zipFile, err := zip.OpenReader(src)
 	if err != nil {

@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-var VERSION string = "1.1.0"
+var VERSION string = "1.1.1"
 var DEBUG bool = false
 var SFDLPassword string = "mlcboard.com"
 var DestinationDownloadPath string
@@ -179,7 +179,16 @@ func StartTango(sfdl_file string) {
 	if UseUNRARUnZIP {
 		fmt.Print("Unpacking ZIP and RAR files ...")
 		dir := RemoveDuplicateSlashes(DestinationDownloadPath + "/" + Server_Name + "/")
-		MrUnpacker(dir, dir)
+
+		// get all (sub) direktories
+		folders, err := GetAllSubs(dir)
+		if err != nil {
+			fmt.Println("Fehler:", err)
+			return
+		}
+		for _, folder := range folders {
+			MrUnpacker(folder, folder)
+		}
 	}
 
 	FillSFDLFilesArray(dirPath)

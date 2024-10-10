@@ -64,40 +64,27 @@ func GetFTPIndex(ftp_path string) error {
 	return nil
 }
 
-func sanitizePath(path string) string {
-	replacements := map[string]string{
-		"[": "%5B",
-		"]": "%5D",
-		" ": "%20",
-		"(": "%28",
-		")": "%29",
-	}
-	for old, new := range replacements {
-		path = strings.ReplaceAll(path, old, new)
-	}
-	return path
-}
-
 func listFilesRecursive(ftpClient *ftp.ServerConn, path string, fileList *[]string) error {
 	err := ftpClient.ChangeDir(path)
 	if err != nil {
-		return err
-	}
-	entries, err := ftpClient.List("")
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		if entry.Type == ftp.EntryTypeFile {
-			Download_Size += entry.Size
-			fileString := path + entry.Name + ";;;" + strconv.FormatUint(entry.Size, 10)
-			*fileList = append(*fileList, fileString)
-		} else if entry.Type == ftp.EntryTypeFolder {
-			newPath := RemoveDuplicateSlashes(path + entry.Name + "/")
-			newPath = sanitizePath(newPath)
-			err := listFilesRecursive(ftpClient, newPath, fileList)
-			if err != nil {
-				return err
+		fmt.Println("FTP Error: ChangeDir failed: ", err)
+	} else {
+		entries, err := ftpClient.List("")
+		if err != nil {
+			fmt.Println("FTP Error: List failed: ", err)
+		} else {
+			for _, entry := range entries {
+				if entry.Type == ftp.EntryTypeFile {
+					Download_Size += entry.Size
+					fileString := path + entry.Name + ";;;" + strconv.FormatUint(entry.Size, 10)
+					*fileList = append(*fileList, fileString)
+				} else if entry.Type == ftp.EntryTypeFolder {
+					newPath := RemoveDuplicateSlashes(path + entry.Name + "/")
+					err := listFilesRecursive(ftpClient, newPath, fileList)
+					if err != nil {
+						return err
+					}
+				}
 			}
 		}
 	}
