@@ -15,8 +15,8 @@ var Server_Name string
 var Server_Uppa string
 var Server_Host string
 var Server_Port int
-var Server_User string = "anonymouse"
-var Server_Pass string = "anonymouse@sfdlsauger.go"
+var Server_User string = "anonymous"
+var Server_Pass string = "anonymous@sfdlsauger.go"
 var Server_Path []string
 
 type SFDLFile struct {
@@ -82,15 +82,34 @@ func OpenSFDL(filepath, password string) error {
 	Server_Pass = sfdlFile.ConnectionInfo.Password
 
 	if sfdlFile.Encrypted {
-		Server_Name = decryptString(password, Server_Name)
-		Server_Uppa = decryptString(password, Server_Uppa)
-		Server_Host = decryptString(password, Server_Host)
-		Server_User = decryptString(password, Server_User)
-		Server_Pass = decryptString(password, Server_Pass)
-
-		for i, path := range Server_Path {
-			Server_Path[i] = decryptString(password, path)
+		if Server_Name != "" {
+			Server_Name = decryptString(password, Server_Name)
 		}
+		if Server_Uppa != "" {
+			Server_Uppa = decryptString(password, Server_Uppa)
+		}
+		if Server_Host != "" {
+			Server_Host = decryptString(password, Server_Host)
+		}
+		if Server_User != "" {
+			Server_User = decryptString(password, Server_User)
+		}
+		if Server_Pass != "" {
+			Server_Pass = decryptString(password, Server_Pass)
+		}
+		for i, path := range Server_Path {
+			if Server_Path[i] != "" {
+				Server_Path[i] = decryptString(password, path)
+			}
+		}
+	}
+
+	if Server_User == "" {
+		Server_User = "anonymous"
+	}
+
+	if Server_Pass == "" {
+		Server_Pass = "anonymous@sfdlsauger.go"
 	}
 
 	if DEBUG {

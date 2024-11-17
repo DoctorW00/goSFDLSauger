@@ -195,7 +195,7 @@ func downloadFile(filename string, downloadDirectory string, p *mpb.Progress) er
 	bar := p.AddBar(int64(fileSize),
 		mpb.PrependDecorators(
 			decor.Name(path.Base(returnFilePathWithoutBytes(filename))),
-			// decor.AverageSpeed(decor.UnitKB, "(% .2f)", decor.WCSyncSpace),
+			decor.AverageSpeed(decor.SizeB1000(0), "(% .2f)", decor.WCSyncSpace),
 		),
 		mpb.AppendDecorators(
 			decor.Counters(decor.SizeB1000(0), "[% .2f/% .2f]", decor.WCSyncSpace),

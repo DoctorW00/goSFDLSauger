@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-var VERSION string = "1.1.1"
+var VERSION string = "1.1.2"
 var DEBUG bool = false
 var SFDLPassword string = "mlcboard.com"
 var DestinationDownloadPath string
