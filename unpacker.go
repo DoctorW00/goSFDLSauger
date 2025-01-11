@@ -203,21 +203,26 @@ func MrUnpacker(src string, dest string) {
 		for _, zipFile := range zipFiles {
 			if err := Unpack(zipFile, dest); err != nil {
 				fmt.Println("unpack ZIP error: ", err)
+				AddLoaderLog("unpack ZIP error: " + err.Error())
 				recallMrUnpacker = false
 				deleteAllZipFiles = false
 			} else {
-				fmt.Printf("unpack ZIP %s successful!\n", zipFile)
+				fmt.Printf("unpacking ZIP %s was successfuly!\n", zipFile)
+				AddLoaderLog(fmt.Sprintf("unpacking ZIP %s was successfuly!", zipFile))
 			}
 		}
 
 		// delete all zip files now
 		if deleteAllZipFiles {
+			AddLoaderLog("deleting ZIP files ...")
 			err := deleteFiles(zipFiles)
 			if err != nil {
 				fmt.Printf("error removing: %v\n", err)
+				AddLoaderLog(fmt.Sprintf("error removing: %v", err))
 				recallMrUnpacker = false
 			} else {
 				fmt.Println("all zip files removed!")
+				AddLoaderLog("all zip files removed!")
 			}
 		}
 	}
@@ -231,16 +236,20 @@ func MrUnpacker(src string, dest string) {
 		if mainRARFile != "" {
 			if err := Unpack(mainRARFile, dest); err != nil {
 				fmt.Println("unpack RAR error: ", err)
+				AddLoaderLog("unpack RAR error: " + err.Error())
 				recallMrUnpacker = false
 			} else {
-				fmt.Println("unpack RAR file(s) successful!")
+				fmt.Println("unpacking RAR file(s) was successfuly!")
+				AddLoaderLog("unpacking RAR file(s) was successfuly!")
 				// delete all rar files now
 				err := deleteFiles(rarFiles)
 				if err != nil {
 					fmt.Printf("error removing: %v\n", err)
+					AddLoaderLog(fmt.Sprintf("error removing: %v", err))
 					recallMrUnpacker = false
 				} else {
 					fmt.Println("all rar files removed!")
+					AddLoaderLog("all rar files removed!")
 				}
 			}
 		}

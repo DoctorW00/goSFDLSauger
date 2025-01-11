@@ -1,0 +1,333 @@
+body {
+    font-family: Arial, sans-serif;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    background-color: #121212;
+    color: #ffffff;
+}
+
+a {
+	outline-color: transparent;
+}
+
+a:link {
+	color: lightgreen;
+}
+
+a:visited {
+	color: lightgreen;
+}
+
+a:focus {
+	text-decoration: none;
+	background: green;
+}
+
+a:hover {
+	text-decoration: none;
+	background: green;
+}
+
+a:active {
+	background: green;
+	color: white;
+}
+
+header {
+    background: #121212;
+    color: #ffffff;
+    padding: 20px;
+    text-align: center;
+	border-bottom: 1px solid #00ff07;
+	background: rgb(53,203,69);
+	background: linear-gradient(180deg, rgba(53,203,69,1) 0%, rgba(71,255,76,1) 7%, rgba(0,93,15,1) 100%);
+}
+
+.logotext {
+	text-shadow: 2px 2px 0 #121212, 2px -2px 0 #121212, -2px 2px 0 #121212, -2px -2px 0 #121212, 2px 0px 0 #121212, 0px 2px 0 #121212, -2px 0px 0 #121212, 0px -2px 0 #121212;
+	color: #FFFFFF;
+}
+
+nav {
+    text-align: center;
+}
+
+nav ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: inline-flex;
+}
+
+nav ul li {
+    margin: 0 5px;
+}
+
+nav ul li a {
+    display: inline-block;
+    padding: 10px 20px;
+    border: 2px solid white;
+    border-radius: 8px;
+    color: white;
+	font-weight: bold;
+    text-decoration: none;
+	background: green;
+}
+
+nav ul li a.logout {
+    background: red;
+    color: white;
+}
+
+nav ul li a.logout:hover {
+    background: darkred;
+    color: white;
+}
+
+nav ul li a:hover {
+    background: lightgreen;
+    color: black;
+}
+
+.breadcrumb {
+    list-style-type: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    font-family: Arial, sans-serif;
+    background-color: transparent;
+    color: white;
+}
+
+.breadcrumb li {
+    display: inline-block;
+    padding: 8px 3px;
+    font-size: 16px;
+}
+
+.breadcrumb li a {
+    text-decoration: none;
+    color: #4CAF50;
+    font-weight: bold;
+}
+
+.breadcrumb li:last-child {
+    font-weight: normal;
+    color: #ddd;
+}
+
+.breadcrumb li+li::before {
+    content: "›";
+    padding: 0 8px;
+    color: #4CAF50;
+}
+
+.breadcrumb li a:hover {
+    color: #66bb6a;
+}
+
+main {
+    flex: 1;
+    padding: 20px;
+    background-color: #1c1c1c;
+}
+
+footer {
+    background-color: #1e1e1e;
+    color: #ffffff;
+    text-align: center;
+    padding: 10px;
+	border-top: 1px solid green;
+}
+
+.drop-area {
+	border: 2px dashed #ccc;
+	border-radius: 10px;
+	padding: 20px;
+	text-align: center;
+	margin: 20px 0;
+	transition: background-color 0.3s;
+}
+.drop-area.hover {
+	background-color: #f0f0f0;
+}
+.file-list {
+	margin-top: 20px;
+}
+.file-list ul {
+	list-style-type: none;
+	padding: 0;
+}
+.file-list li {
+	padding: 5px;
+	border: 1px solid #ccc;
+	margin-bottom: 5px;
+}
+
+#download {
+	margin: 10px 0;
+	padding: 0;
+	box-sizing: border-box;
+}
+
+#download_title {
+	width: 100%;
+	margin: 0;
+	padding: 0;
+	border: 1px solid #00ff07;
+	box-sizing: border-box;
+	background-color: #292929;
+	color: white;
+	display: none;
+	text-align: center;
+}
+
+#download_release {
+	width: 100%;
+	margin: 0;
+	padding: 10px;
+	font-weight: bold;
+	box-sizing: border-box;
+}
+
+#download_progress {
+	width: 100%;
+	margin: 0;
+	padding: 10px;
+	border-top: 1px solid white;
+	color: white;
+	box-sizing: border-box;
+	color: #1a1a1a;
+}
+
+#download_files {
+	width: 100%;
+	padding: 0;
+	margin: 0;
+	display: normal;
+	box-sizing: border-box;
+}
+
+#logBox {
+	width: 100%;
+	height: 180px;
+	border: 1px solid #ccc;
+	padding: 10px;
+	overflow-y: auto;
+	font-family: monospace;
+	background-color: #292929;
+	color: #white;
+	box-sizing: border-box;
+	resize: vertical;
+}
+
+.log-line {
+	margin-bottom: 5px;
+}
+
+.log-line :nth-child(even) {
+    background-color: #212121;
+}
+
+.download_block {
+	width: 100%;
+	display: normal;
+	margin: 5px 0;
+	padding: 0;
+}
+
+.download_block:nth-child(odd) {
+    background-color: #292929;
+}
+
+.download_block:nth-child(even) {
+    background-color: #212121;
+}
+
+.download_filename,
+.download_progress,
+.download_status {
+	display: inline-flex;
+	padding: 5px;
+	margin: 0;
+	white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+	border: none;
+	box-sizing: border-box;
+}
+
+.download_filename {
+	width: 60%;
+	justify-content: left;
+	align-items: left;
+	text-align: left;
+	background: none;
+}
+
+.download_progress {
+	width: 30%;
+	justify-content: right;
+	align-items: right;
+	text-align: right;
+	background: none;
+	color: #1a1a1a;
+}
+
+.download_status {
+	width: 10%;
+	justify-content: center;
+	align-items: center;
+	text-align: center;
+	background: none;
+}
+
+.start-stop-btn {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 0;
+	background-color: #4CAF50;
+	color: white;
+	border: none;
+	border-radius: 8px;
+	cursor: pointer;
+	transition: background-color 0.3s;
+	width: 30px;
+	height: 30px;
+	text-align: center;
+	font-size: 0;
+	margin: 10px auto;
+}
+
+.start-stop-btn:hover {
+	background-color: #45a049;
+}
+
+.start-stop-btn:focus {
+	outline: none;
+}
+
+.start-icon::before {
+	content: '\25B6'; /* Play-Symbol (▶) */
+	font-size: 18px;
+	margin-left: 3px;
+	margin-bottom: 2px;
+}
+
+.stop-icon::before {
+	content: '\25A0'; /* Stop-Symbol (■) */
+	font-size: 25px;
+	margin-bottom: 8px;
+}
+
+.stop-icon {
+	background-color: #f44336;
+}
+
+.stop-icon:hover {
+	background-color: red;
+}

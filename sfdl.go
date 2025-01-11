@@ -41,6 +41,16 @@ type BulkFolderPath struct {
 	BulkFolderPath string   `xml:"BulkFolderPath"`
 }
 
+func resetSFDLGlobals() {
+	Server_Name = ""
+	Server_Uppa = ""
+	Server_Host = ""
+	Server_Port = 0
+	Server_User = "anonymous"
+	Server_Pass = "anonymous@sfdlsauger.go"
+	Server_Path = []string{}
+}
+
 func OpenSFDL(filepath, password string) error {
 	file, err := os.Open(filepath)
 	if err != nil {
@@ -126,6 +136,12 @@ func OpenSFDL(filepath, password string) error {
 }
 
 func decryptString(password string, text string) string {
+	// if not legal base64 return string as is
+	_, err := base64.StdEncoding.DecodeString(text)
+	if err != nil {
+		return string(text)
+	}
+
 	decryptedText, err := aes128cbc(password, text)
 	if err != nil {
 		fmt.Println("Error: AES_128_CBC unable to decrypt string!")

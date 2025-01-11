@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>goSFDLSauger WebGUI</title>
+	<link rel="stylesheet" href="css/sauger.css">
+</head>
+<body>
+
+	<header>
+        <h1 class="logotext">goSFDLSauger WebGUI</h1>
+        <nav>
+            <ul>
+				<li><a href="/files">Files</a></li>
+				<li><a href="/password.html">Change Password</a></li>
+                <li><a href="/logout" class="logout">LogOut</a></li>
+            </ul>
+        </nav>
+    </header>
+
+	<main>
+	
+	<div id="logBox"></div>
+
+	<div class="drop-area" id="drop-area">
+		<p>Drop file(s) here or click to upload</p>
+		<input type="file" id="fileInput" name="fileInput" accept=".sfdl" multiple style="display: none;">
+	</div>
+	
+	<div class="file-list" id="fileList"></div>
+	<div id="responseMessage" style="margin-top: 20px;"></div>
+	
+	<div id="download">
+		<div id="download_title">
+			<div id="download_release"></div>
+			<div id="download_progress"></div>
+			<div><button id="startStopButton" class="start-stop-btn stop-icon" onclick="startStopBtn()"></button></div>
+		</div>
+		<div id="download_files"></div>
+	</div>
+	
+	</main>
+
+    <footer>
+        <p>&copy; GrafSauger<br /><small>Nur die harten Sauger kommen durch!</small></p>
+    </footer>
+
+    <script>
+    const eventSource = new EventSource('/events');
+	let logEntries = [];
+
+    eventSource.onmessage = function(event) {
+		try {
+			const data = JSON.parse(event.data);
+			
+			if (data.server) {
+				
+				const downloadTitle = document.getElementById('download_title');
+				const downloadRelease = document.getElementById('download_release');
+				const downloadProgress = document.getElementById('download_progress');
+				
+				downloadTitle.style.display = "block";
+				downloadRelease.textContent = data.server.Name;
+				downloadProgress.textContent = `${data.server.Progress.toFixed(2)}% (${formatBytes(data.server.Loaded)} / ${formatBytes(data.server.Total)})`;
+				downloadProgress.style.background = `linear-gradient(to right, #4caf50 ${data.server.Progress.toFixed(2)}%, #f3f3f3 ${data.server.Progress.toFixed(2)}%)`;
+				
+			} else if (data.files) {
+				let existingItem = document.getElementById(`${data.files.Name}`);
+
+                if (existingItem) {
+					progressBarUpdate(
+					  `${data.files.Name}`,
+					  `${data.files.Progress.toFixed(2)}`,
+					  `(${formatBytes(data.files.Loaded)} / ${formatBytes(data.files.Total)})`,
+					  statusID2Text(data.files.Status)
+					);
+
+				} else {
+				
+					const loaded = data.files.Loaded !== undefined ? data.files.Loaded : 0;
+                    const progress = data.files.Progress !== undefined ? data.files.Progress.toFixed(2) : 0;
+                    const status = data.files.Status !== undefined ? data.files.Status : 0;
+					
+					addDownloadBlock( `${data.files.Name}`, `${progress}`, `${status}` );
+					
+				}
+			} else if (data.logs) {
+				addLogEntry(data.logs);
+			}
+		} catch (e) {
+			console.error("Error parsing event data:", e);
+		}
+	}
+
+	let startStopButtonStatus = "none"
+	
+    const buttonStartStop = document.getElementById('startStopButton');
+	
+	async function fetchData(url) {
+		try {
+			const response = await fetch(url);
+			if (!response.ok) {
+				throw new Error(`HTTP-Error: ${response.status}`);
+			}
+			
+			const data = await response.json();
+    
+			if (data.status === 'isDownloadRunning') {
+				if (data.message === 'true') {
+					buttonStartStop.classList.remove('start-icon');
+					buttonStartStop.classList.add('stop-icon');
+					startStopButtonStatus = "stop"
+				} else if (data.message === 'false') {
+					buttonStartStop.classList.remove('stop-icon');
+					buttonStartStop.classList.add('start-icon');
+					startStopButtonStatus = "start"
+				}
+			}
+		
+		} catch (error) {
+			console.error('error:', error);
+		}
+	}
+
+	function startFetching(url) {
+	  setInterval(() => {
+		fetchData(url);
+	  }, 1000);
+	}
+
+	startFetching('/start-stop-status');
+
+	async function startStopBtn() {
+		const url_stop = '/stop-downloads';
+		const url_start = '/start-downloads';
+		
+		let useURL = url_stop;
+		
+		if(startStopButtonStatus == "start") {
+			useURL = url_start;
+		}
+		
+		if(startStopButtonStatus == "stop") {
+			useURL = url_stop;
+		}
+		
+		console.log('startStopButtonStatus:', startStopButtonStatus);
+		console.log("useURL:", useURL);
+		
+		try {
+			const response = await fetch(useURL);
+			if (!response.ok) {
+				throw new Error(`HTTP-Fehler: ${response.status}`);
+			}
+			const data = await response.json();
+			console.log('Daten erhalten:', data);
+		} catch (error) {
+			console.error('error calling url:', error);
+		}
+	}
+
+	function addLogEntry(entry) {
+		if (logEntries.includes(entry)) {
+			return;
+		}
+
+		logEntries.push(entry);
+
+		const logLine = document.createElement("div");
+		logLine.classList.add("log-line");
+		logLine.textContent = entry;
+		logBox.appendChild(logLine);
+		logBox.scrollTop = logBox.scrollHeight;
+	}
+
+	const dropArea = document.getElementById("drop-area");
+	const fileInput = document.getElementById("fileInput");
+	const fileList = document.getElementById("fileList");
+	const responseMessage = document.getElementById("responseMessage");
+
+	dropArea.addEventListener("click", () => {
+		fileInput.click();
+	});
+
+	dropArea.addEventListener("dragover", (event) => {
+		event.preventDefault();
+		dropArea.classList.add("hover");
+	});
+
+	dropArea.addEventListener("dragleave", () => {
+		dropArea.classList.remove("hover");
+	});
+
+	dropArea.addEventListener("drop", (event) => {
+		event.preventDefault();
+		dropArea.classList.remove("hover");
+		const files = event.dataTransfer.files;
+		handleFiles(files);
+	});
+
+	fileInput.addEventListener("change", (event) => {
+		const files = event.target.files;
+		handleFiles(files);
+	});
+
+	function handleFiles(files) {
+		fileList.innerHTML = "";
+		if (files.length > 0) {
+			const ul = document.createElement("ul");
+			ul.className = "sfdluploadlist";
+			for (let i = 0; i < files.length; i++) {
+				const li = document.createElement("li");
+				li.textContent = files[i].name;
+				ul.appendChild(li);
+			}
+			fileList.appendChild(ul);
+			uploadFiles(files);
+		}
+	}
+
+	async function uploadFiles(files) {
+		const formData = new FormData();
+		for (let i = 0; i < files.length; i++) {
+			formData.append("fileInput", files[i]);
+		}
+
+		try {
+			const response = await fetch("/upload", {
+				method: "POST",
+				body: formData,
+			});
+
+			responseMessage.style.color = response.ok ? "green" : "red";
+
+			if (response.ok) {
+				responseMessage.textContent = "File(s) successfully uploaded!";
+				fileInput.value = "";
+				fileList.innerHTML = "";
+			} else {
+				const errorText = await response.text();
+				responseMessage.textContent = "Error uploading SFDL file(s): " + errorText;
+			}
+		} catch (error) {
+			responseMessage.style.color = "red";
+			responseMessage.textContent = "Network error: " + error.message;
+		}
+	}
+	
+	function statusID2Text(status) {
+		let txt = '';
+
+		if (status == 0) {
+			txt = 'waiting';
+		} else if (status == 1) {
+			txt = 'loading';
+		} else if (status == 2) {
+			txt = 'halted';
+		} else if (status == 3) {
+			txt = 'error';
+		} else if (status == 9) {
+			txt = 'done';
+		} else {
+			txt = 'unknown';
+		}
+
+		return txt;
+	}
+
+	function shortenString(str, maxLength) {
+		if (str.length <= maxLength) {
+			return str;
+		}
+		let startLength = Math.floor((maxLength - 3) / 2);
+		let endLength = maxLength - 3 - startLength;
+		let shortened = str.substring(0, startLength) + "..." + str.substring(str.length - endLength);
+		return shortened;
+	}
+
+	function addDownloadBlock(filename, progress, status) {
+		let downloadFiles = document.getElementById('download_files');
+
+		let newBlock = document.createElement('div');
+		newBlock.id = filename;
+		newBlock.classList.add('download_block');
+
+		let filenameDiv = document.createElement('div');
+		filenameDiv.classList.add('download_filename');
+		filenameDiv.textContent = shortenString(filename, 75);
+
+		let progressDiv = document.createElement('div');
+		progressDiv.classList.add('download_progress');
+		progressDiv.textContent = progress;
+
+		let statusDiv = document.createElement('div');
+		statusDiv.classList.add('download_status');
+		statusDiv.textContent = statusID2Text(status);
+
+		newBlock.appendChild(filenameDiv);
+		newBlock.appendChild(progressDiv);
+		newBlock.appendChild(statusDiv);
+
+		downloadFiles.appendChild(newBlock);
+	}
+
+	function progressBarUpdate(blockID, progress, progressText, statusText) {
+
+		let blockElement = document.getElementById(blockID);
+	  
+		if (blockElement) {
+			let progressBar = blockElement.querySelector('.download_progress');
+			if (progressBar) {
+				progressBar.textContent = `${progress}% ${progressText}`;
+				progressBar.style.background = `linear-gradient(to right, #4caf50 ${progress}%, #f3f3f3 ${progress}%)`;
+			}
+			
+			let statusElement = blockElement.querySelector('.download_status');
+			if (statusElement) {
+				statusElement.textContent = statusText;
+			}
+		}
+	}
+
+	function formatBytes(bytes, decimals = 2) {
+		if (bytes === 0) return '0 Bytes';
+		const units = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+		const power = Math.floor(Math.log(bytes) / Math.log(1000));
+		const value = (bytes / Math.pow(1000, power)).toFixed(decimals);
+		return `${value} ${units[power]}`;
+	}
+	</script>
+
+
+</body>
+</html>
+

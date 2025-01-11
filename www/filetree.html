@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>goSFDLSauger WebGUI</title>
+	<link rel="stylesheet" href="css/sauger.css">
+</head>
+<body>
+
+	<header>
+        <h1 class="logotext">goSFDLSauger WebGUI</h1>
+        <nav>
+            <ul>
+				<li><a href="/index.html">Downloads</a></li>
+				<li><a href="/password.html">Change Password</a></li>
+                <li><a href="/logout" class="logout">LogOut</a></li>
+            </ul>
+        </nav>
+    </header>
+
+	<main>
+	
+	<ul class="breadcrumb">
+		<li><a href="/files">Files</a></li>
+		{{if .PathParts}}
+			{{- $path := "" -}}
+			{{range $index, $part := .PathParts}}
+				{{- if gt $index 0}}
+					{{- $path = printf "%s/%s" $path $part }}
+				{{- else}}
+					{{- $path = $part }}
+				{{- end}}
+				<li><a href="/files?path={{$path}}">{{$part}}</a></li>
+			{{end}}
+		{{end}}
+	</ul>
+
+    <ul>
+        {{range .Files}}
+            <li>
+                {{if .IsDir}}
+                    <b>[Path]</b> <a href="/files?path={{.Path}}">{{.Name}}</a> <a onclick="deleteFile('{{.Path}}')" href="#">(X)</a>
+                {{else}}
+                    <b>{{.Name}} ({{.Size}})</b> <a href="/files?dl={{.Path}}">[Download]</a> <a onclick="deleteFile('{{.Path}}')" href="#">(X)</a>
+                {{end}}
+            </li>
+        {{end}}
+    </ul>
+	
+	</main>
+
+    <footer>
+        <p>&copy; GrafSauger<br /><small>Nur die harten Sauger kommen durch!</small></p>
+    </footer>
+	
+	<script>
+        function deleteFile(path) {
+            const confirmDelete = confirm(`Really delete "${path}"?`);
+            if (confirmDelete) {
+                fetch(`/delete?path=${encodeURIComponent(path)}`, {
+                    method: 'DELETE'
+                })
+                .then(response => {
+                    if (response.ok) {
+                        return response.text();
+                    } else {
+                        throw new Error("Error removing file");
+                    }
+                })
+                .then(message => {
+                    alert(message);
+                    location.reload();
+                })
+                .catch(error => {
+                    alert(error.message);
+                });
+            }
+        }
+    </script>
+	
+</body>
+</html>

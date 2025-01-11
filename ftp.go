@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -9,11 +10,20 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/jlaffaye/ftp"
 	"github.com/vbauerster/mpb/v8"
 	"github.com/vbauerster/mpb/v8/decor"
 )
+
+type ProgressGlobal struct {
+	Name     string
+	Total    uint64
+	Loaded   uint64
+	Progress float64
+	Status   int
+}
 
 type ProgressFile struct {
 	Name     string
@@ -32,9 +42,23 @@ type progressWriter struct {
 }
 
 var Server_File []string
-var progessFiles []ProgressFile
+var ProgressGlobals []ProgressGlobal
+var ProgessFiles []ProgressFile
+var progressUpdateTime time.Time
+var ftpConnections = make(map[string]context.CancelFunc)
+var ftpMutex sync.Mutex
+var globalCancel context.CancelFunc
+var downloadQueue chan string
+
+func resetFTPGlobals() {
+	Server_File = []string{}
+	ProgressGlobals = []ProgressGlobal{}
+	ProgessFiles = []ProgressFile{}
+}
 
 func GetFTPIndex(ftp_path string) error {
+	resetFTPGlobals()
+
 	ftpAddress := fmt.Sprintf("%s:%d", Server_Host, Server_Port)
 	ftpClient, err := ftp.Dial(ftpAddress)
 	if err != nil {
@@ -60,6 +84,28 @@ func GetFTPIndex(ftp_path string) error {
 		}
 	}
 
+	totalDownload := uint64(0)
+
+	for _, file := range Server_File {
+		ProgessFiles = append(ProgessFiles,
+			ProgressFile{
+				Name:     returnFilePathWithoutBytes(path.Base(file)),
+				Total:    returnFileSizeInUnit64(file),
+				Loaded:   0,
+				Progress: 0.0,
+				Status:   0})
+
+		totalDownload += returnFileSizeInUnit64(file)
+	}
+
+	ProgressGlobals = append(ProgressGlobals,
+		ProgressGlobal{
+			Name:     Server_Name,
+			Total:    totalDownload,
+			Loaded:   0,
+			Progress: 0.0,
+			Status:   0})
+
 	defer ftpClient.Quit()
 	return nil
 }
@@ -67,11 +113,13 @@ func GetFTPIndex(ftp_path string) error {
 func listFilesRecursive(ftpClient *ftp.ServerConn, path string, fileList *[]string) error {
 	err := ftpClient.ChangeDir(path)
 	if err != nil {
-		fmt.Println("FTP Error: ChangeDir failed: ", err)
+		fmt.Println("FTP Error: ChangeDir failed:", err)
+		AddLoaderLog(fmt.Sprintln("FTP Error: ChangeDir failed:", err))
 	} else {
 		entries, err := ftpClient.List("")
 		if err != nil {
-			fmt.Println("FTP Error: List failed: ", err)
+			fmt.Println("FTP Error: List failed:", err)
+			AddLoaderLog(fmt.Sprintln("FTP Error: List failed:", err))
 		} else {
 			for _, entry := range entries {
 				if entry.Type == ftp.EntryTypeFile {
@@ -91,64 +139,132 @@ func listFilesRecursive(ftpClient *ftp.ServerConn, path string, fileList *[]stri
 	return nil
 }
 
-func StartFTPDownloads() error {
+func InitializeFTPDownloads() error {
+	ctxStartFTP, cancelFTP := context.WithCancel(context.Background())
+	globalCancel = cancelFTP
+	return StartFTPDownloads(ctxStartFTP)
+}
+
+func StartFTPDownloads(ctxFTP context.Context) error {
 	p := mpb.New(
 		mpb.WithOutput(os.Stdout),
 	)
 
-	downloadQueue := make(chan string, MaxConcurrentDownloads)
-	var wg sync.WaitGroup
+	if downloadQueue == nil {
+		downloadQueue = make(chan string, MaxConcurrentDownloads)
+	}
+
+	var wgFTP sync.WaitGroup
 
 	for i := 0; i < MaxConcurrentDownloads; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for filename := range downloadQueue {
-				err := downloadFile(filename, DestinationDownloadPath, p)
-				if err != nil {
-					fmt.Printf("Error loading file %s: %v\n", returnFilePathWithoutBytes(filename), err)
+		wgFTP.Add(1)
+		go func(workerID int) {
+			defer wgFTP.Done()
+			if DEBUG {
+				fmt.Printf("Worker %d started\n", workerID)
+			}
+			for {
+				select {
+				case <-ctxFTP.Done():
+					if DEBUG {
+						fmt.Printf("Worker %d stopping due to cancellation.\n", workerID)
+					}
+					return
+				case filename, ok := <-downloadQueue:
+					if !ok {
+						return
+					}
+					err := downloadFileWithContext(filename, DestinationDownloadPath, p)
+					if err != nil && err != io.EOF {
+						fmt.Printf("Error loading file %s: %v\n", filepath.Base(returnFilePathWithoutBytes(filename)), err)
+						AddLoaderLog(fmt.Sprintf("Error loading file %s: %v\n", filepath.Base(returnFilePathWithoutBytes(filename)), err))
+					} else {
+						AddLoaderLog(filepath.Base(returnFilePathWithoutBytes(filename)) + " - done!")
+					}
 				}
 			}
-		}()
+		}(i)
 	}
 
 	for _, file := range Server_File {
-		downloadQueue <- file
+		select {
+		case <-ctxFTP.Done():
+			fmt.Println("Download queue processing stopped.")
+			if downloadQueue != nil {
+				close(downloadQueue)
+			}
+			wgFTP.Wait()
+			return fmt.Errorf("downloads stopped")
+		case downloadQueue <- file:
+			// skip on user cancellation
+		}
 	}
+
 	close(downloadQueue)
-
-	wg.Wait()
-
+	wgFTP.Wait()
 	return nil
 }
 
-func downloadFile(filename string, downloadDirectory string, p *mpb.Progress) error {
-	ftpAddress := fmt.Sprintf("%s:%d", Server_Host, Server_Port)
-	ftpClient, err := ftp.Dial(ftpAddress)
-	if err != nil {
-		return err
-	}
+func StopAllFTPDownloads() {
+	if isDownloadRunning {
+		AddLoaderLog("Stopping all downloads!")
 
-	err = ftpClient.Login(Server_User, Server_Pass)
+		if globalCancel != nil {
+			globalCancel()
+		}
+
+		ftpMutex.Lock()
+
+		for id, cancel := range ftpConnections {
+			cancel()
+			delete(ftpConnections, id)
+			fmt.Printf("Download for %s stopped.\n", filepath.Base(returnFilePathWithoutBytes(id)))
+			AddLoaderLog(fmt.Sprintf("Download for %s stopped.\n", filepath.Base(returnFilePathWithoutBytes(id))))
+		}
+
+		if downloadQueue != nil {
+			close(downloadQueue)
+			downloadQueue = nil
+		}
+
+		ftpMutex.Unlock()
+
+		fmt.Println("All downloads stopped.")
+		AddLoaderLog("All downloads stopped.")
+		isDownloadRunning = false
+	}
+}
+
+func downloadFileWithContext(filename string, downloadDirectory string, p *mpb.Progress) error {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	ftpMutex.Lock()
+	ftpConnections[filename] = cancel
+	ftpMutex.Unlock()
+	defer func() {
+		ftpMutex.Lock()
+		delete(ftpConnections, filename)
+		ftpMutex.Unlock()
+	}()
+
+	ftpAddress := fmt.Sprintf("%s:%d", Server_Host, Server_Port)
+	ftpClient, err := ftp.Dial(ftpAddress, ftp.DialWithContext(ctx))
 	if err != nil {
 		return err
 	}
 	defer ftpClient.Quit()
 
-	fileSize := returnFileSizeInUnit64(filename)
+	err = ftpClient.Login(Server_User, Server_Pass)
+	if err != nil {
+		return err
+	}
 
+	fileSize := returnFileSizeInUnit64(filename)
 	fileInclSubPath := returnSubPath(filename, Server_Name)
 	if fileInclSubPath == "" {
 		fileInclSubPath = filepath.Base(filename)
 	}
 	fullLocalDownloadFilePath := RemoveDuplicateSlashes(downloadDirectory + "/" + Server_Name + "/" + fileInclSubPath)
-
-	if DEBUG {
-		fmt.Printf("fileSize: %d\n", fileSize)
-		fmt.Printf("fullLocalDownloadFilePath: %s\n", fullLocalDownloadFilePath)
-		fmt.Printf("filepath (without bytes): %s\n", returnFilePathWithoutBytes(filename))
-		fmt.Printf("filename only: %s\n", returnFilePathWithoutBytes(path.Base(filename)))
-	}
 
 	dir := filepath.Dir(fullLocalDownloadFilePath)
 	err = os.MkdirAll(dir, os.ModePerm)
@@ -178,48 +294,76 @@ func downloadFile(filename string, downloadDirectory string, p *mpb.Progress) er
 	}
 	defer localFile.Close()
 
-	if DEBUG {
-		fmt.Printf("downloadedSize: %d\n", downloadedSize)
-		fmt.Printf("fileSize: %d\n", fileSize)
-	}
-
-	var remoteFile *ftp.Response
 	if downloadedSize < int64(fileSize) {
-		remoteFile, err = ftpClient.RetrFrom(returnFilePathWithoutBytes(filename), uint64(downloadedSize))
+		AddLoaderLog("Downloading now: " + filepath.Base(returnFilePathWithoutBytes(filename)))
+
+		remoteFile, err := ftpClient.RetrFrom(returnFilePathWithoutBytes(filename), uint64(downloadedSize))
 		if err != nil {
 			return err
 		}
 		defer remoteFile.Close()
-	}
 
-	bar := p.AddBar(int64(fileSize),
-		mpb.PrependDecorators(
-			decor.Name(path.Base(returnFilePathWithoutBytes(filename))),
-			decor.AverageSpeed(decor.SizeB1000(0), "(% .2f)", decor.WCSyncSpace),
-		),
-		mpb.AppendDecorators(
-			decor.Counters(decor.SizeB1000(0), "[% .2f/% .2f]", decor.WCSyncSpace),
-			decor.OnComplete(decor.NewPercentage("%d", decor.WCSyncSpace), "done"),
-		),
-	)
+		bar := p.AddBar(int64(fileSize),
+			mpb.PrependDecorators(
+				decor.Name(filepath.Base(returnFilePathWithoutBytes(filename))),
+				decor.AverageSpeed(decor.SizeB1000(0), "(% .2f)", decor.WCSyncSpace),
+			),
+			mpb.AppendDecorators(
+				decor.Counters(decor.SizeB1000(0), "[% .2f/% .2f]", decor.WCSyncSpace),
+				decor.OnComplete(decor.NewPercentage("%d", decor.WCSyncSpace), "done"),
+			),
+		)
 
-	progressWriter := &progressWriter{
-		writer:     localFile,
-		total:      fileSize,
-		downloaded: uint64(downloadedSize),
-		filename:   returnFilePathWithoutBytes(filename),
-		bar:        bar,
-	}
+		progressWriter := &progressWriter{
+			writer:     localFile,
+			total:      fileSize,
+			downloaded: uint64(downloadedSize),
+			filename:   returnFilePathWithoutBytes(filename),
+			bar:        bar,
+		}
 
-	if downloadedSize < int64(fileSize) {
-		progressWriter.bar.SetCurrent(downloadedSize)
-		_, err = io.Copy(progressWriter, remoteFile)
-		if err != nil {
-			return err
+		// set progress for files on resume
+		progressWriter.bar.SetCurrent(int64(downloadedSize))
+
+		buffer := make([]byte, 32*1024)
+		for {
+			select {
+			case <-ctx.Done():
+				bar.Abort(true)
+				ftpClient.Quit()
+				if DEBUG {
+					fmt.Printf("Download for %s cancelled.\n", filepath.Base(returnFilePathWithoutBytes(filename)))
+				}
+				return fmt.Errorf("download cancelled")
+			default:
+				n, readErr := remoteFile.Read(buffer)
+				if n > 0 {
+					_, writeErr := progressWriter.Write(buffer[:n])
+					if writeErr != nil {
+						return writeErr
+					}
+				}
+				if readErr == io.EOF {
+					return readErr
+				}
+				if readErr != nil {
+					return readErr
+				}
+			}
 		}
 	} else {
+		bar := p.AddBar(int64(fileSize), mpb.BarRemoveOnComplete())
 		bar.SetTotal(int64(fileSize), true)
+		progressWriter := &progressWriter{
+			bar: bar,
+		}
 		progressWriter.bar.SetCurrent(int64(fileSize))
+
+		if UseWebserver {
+			updateFileByName(ProgessFiles, filepath.Base(returnFilePathWithoutBytes(filename)), fileSize, 100, 9)
+		}
+
+		AddLoaderLog(filepath.Base(returnFilePathWithoutBytes(filename)) + " - done!")
 	}
 
 	return nil
@@ -232,24 +376,55 @@ func (pw *progressWriter) Write(p []byte) (int, error) {
 
 	pw.bar.IncrBy(n)
 
-	if nameExists(progessFiles, path.Base(pw.filename)) {
-		updateFileByName(progessFiles, path.Base(pw.filename), pw.downloaded, progress, 1)
-	} else {
-		progessFiles = append(progessFiles,
-			ProgressFile{Name: path.Base(pw.filename),
-				Total:    pw.total,
-				Loaded:   pw.downloaded,
-				Progress: progress,
-				Status:   1})
+	if UseWebserver {
+		if nameExists(ProgessFiles, path.Base(pw.filename)) {
+			updateFileByName(ProgessFiles, path.Base(pw.filename), pw.downloaded, progress, 1)
+		} else {
+			ProgessFiles = append(ProgessFiles,
+				ProgressFile{Name: path.Base(pw.filename),
+					Total:    pw.total,
+					Loaded:   pw.downloaded,
+					Progress: progress,
+					Status:   1})
+		}
+
+		// get total download progress
+		totalDL := uint64(0)
+		for _, file := range ProgessFiles {
+			totalDL += file.Loaded
+		}
+
+		ProgressGlobals[0].Loaded = totalDL
+		if ProgressGlobals[0].Total != 0 {
+			ProgressGlobals[0].Progress = (float64(totalDL) / float64(ProgressGlobals[0].Total)) * 100
+		}
+
+		if totalDL == ProgressGlobals[0].Total {
+			ProgressGlobals[0].Status = 9
+		} else {
+			ProgressGlobals[0].Status = 1
+		}
+
+		if DEBUG {
+			if time.Since(progressUpdateTime) >= time.Second {
+				for _, progress := range ProgessFiles {
+					fmt.Printf("Name: %s, Total: %d, Loaded: %d, Progress: %.2f%%, Status: %d\n",
+						progress.Name, progress.Total, progress.Loaded, progress.Progress, progress.Status)
+				}
+				progressUpdateTime = time.Now()
+			}
+		}
 	}
+
 	return n, err
 }
 
 func updateFileByName(files []ProgressFile, name string, downloaded uint64, newSize float64, status int) bool {
 	for i, file := range files {
 		if file.Name == name {
+			files[i].Loaded = downloaded
 			files[i].Progress = newSize
-			if downloaded <= file.Total {
+			if newSize == 100.0 {
 				files[i].Status = 9
 			} else {
 				files[i].Status = status
@@ -307,7 +482,7 @@ func returnSubPath(path string, name string) string {
 func returnFileSizeInUnit64(path string) uint64 {
 	parts := strings.Split(path, ";;;")
 	if len(parts) != 2 {
-		panic("Error: Unknown file string format!")
+		panic("Error: Unknown file string format [2]!")
 	}
 
 	bytesStr := parts[1]
