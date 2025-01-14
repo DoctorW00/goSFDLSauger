@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-var VERSION string = "1.2.0"
+var VERSION string = "1.2.1"
 var DEBUG bool = false
 var SFDLPassword string = "mlcboard.com"
 var DestinationDownloadPath string
@@ -280,6 +280,13 @@ func StartTango(wgTango *sync.WaitGroup, sfdl_file string) {
 					if UseWebserver {
 						ProgressGlobals[0].Status = 3
 					}
+				}
+
+				if DownloadUserAbort {
+					if DEBUG {
+						fmt.Println("DownloadUserAbort: ", DownloadUserAbort)
+					}
+					gotErrors++
 				}
 
 				if gotErrors == 0 {

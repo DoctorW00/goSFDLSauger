@@ -224,9 +224,9 @@ func (s *Server) Start() {
 		sendServerResponseJson("success", "stopping all downloads", w)
 		AddLoaderLog("Stopping all downloads!")
 		if UseMQTT {
-			SendMQTTMsg("Stopping all downloads!", "command", "stop")
+			go SendMQTTMsg("Stopping all downloads!", "command", "stop")
 		}
-		StopAllFTPDownloads()
+		go StopAllFTPDownloads()
 	})
 	http.HandleFunc("/start-downloads", func(w http.ResponseWriter, r *http.Request) {
 		cookie, err := r.Cookie("session")
@@ -245,9 +245,17 @@ func (s *Server) Start() {
 			SendMQTTMsg("Starting all downloads!", "command", "start")
 		}
 		go func() {
+			FillSFDLFilesArray(filepath.Join(UserDownloadDir, "/sfdl_files"), "")
+			if DEBUG {
+				fmt.Println("/start-downloads")
+				fmt.Println("SFDL_Files len:", len(SFDL_Files))
+			}
 			if len(SFDL_Files) > 0 {
 				sfdl_file := SFDL_Files[0]
-				startLoaderFunctions(sfdl_file)
+				if DEBUG {
+					fmt.Println("sfdl_file:", sfdl_file)
+				}
+				go startLoaderFunctions(sfdl_file)
 			}
 		}()
 	})

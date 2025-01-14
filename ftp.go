@@ -49,11 +49,19 @@ var ftpConnections = make(map[string]context.CancelFunc)
 var ftpMutex sync.Mutex
 var globalCancel context.CancelFunc
 var downloadQueue chan string
+var DownloadUserAbort bool = false
 
 func resetFTPGlobals() {
 	Server_File = []string{}
 	ProgressGlobals = []ProgressGlobal{}
 	ProgessFiles = []ProgressFile{}
+	DownloadUserAbort = false
+	for key := range ftpConnections {
+		delete(ftpConnections, key)
+	}
+	ftpMutex = sync.Mutex{}
+	globalCancel = nil
+	downloadQueue = nil
 }
 
 func GetFTPIndex(ftp_path string) error {
@@ -206,6 +214,16 @@ func StartFTPDownloads(ctxFTP context.Context) error {
 }
 
 func StopAllFTPDownloads() {
+	DownloadUserAbort = true
+
+	defer func() {
+		if r := recover(); r != nil {
+			if DEBUG {
+				fmt.Println("Catch panic:", r)
+			}
+		}
+	}()
+
 	if isDownloadRunning {
 		AddLoaderLog("Stopping all downloads!")
 
@@ -223,8 +241,17 @@ func StopAllFTPDownloads() {
 		}
 
 		if downloadQueue != nil {
-			close(downloadQueue)
-			downloadQueue = nil
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						if DEBUG {
+							fmt.Println("Catch panic on chan close:", r)
+						}
+					}
+				}()
+				close(downloadQueue)
+				downloadQueue = nil
+			}()
 		}
 
 		ftpMutex.Unlock()
