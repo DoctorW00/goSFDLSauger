@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-var VERSION string = "1.2.1"
+var VERSION string = "1.2.2"
 var DEBUG bool = false
 var SFDLPassword string = "mlcboard.com"
 var DestinationDownloadPath string
@@ -372,6 +372,11 @@ func StartTango(wgTango *sync.WaitGroup, sfdl_file string) {
 		}
 	}
 
+	time.Sleep(2 * time.Second)
+	resetSFDLGlobals()
+	resetFTPGlobals()
+	time.Sleep(1 * time.Second)
+
 	if gotErrors != 0 {
 		SFDL_Files = removeSFDLFile(SFDL_Files, sfdl_file) // remove sfdl from list
 	} else {
@@ -379,10 +384,6 @@ func StartTango(wgTango *sync.WaitGroup, sfdl_file string) {
 		fmt.Println(newMsg)
 		AddLoaderLog(newMsg)
 	}
-
-	time.Sleep(2 * time.Second)
-	resetSFDLGlobals()
-	resetFTPGlobals()
 
 	if len(SFDL_Files) > 0 {
 		next_sfdl_file := SFDL_Files[0]

@@ -52,6 +52,7 @@ var downloadQueue chan string
 var DownloadUserAbort bool = false
 
 func resetFTPGlobals() {
+	Download_Size = 0
 	Server_File = []string{}
 	ProgressGlobals = []ProgressGlobal{}
 	ProgessFiles = []ProgressFile{}
@@ -330,7 +331,7 @@ func downloadFileWithContext(filename string, downloadDirectory string, p *mpb.P
 		}
 		defer remoteFile.Close()
 
-		bar := p.AddBar(int64(fileSize),
+		bar := p.AddBar(int64(fileSize), mpb.BarRemoveOnComplete(),
 			mpb.PrependDecorators(
 				decor.Name(filepath.Base(returnFilePathWithoutBytes(filename))),
 				decor.AverageSpeed(decor.SizeB1000(0), "(% .2f)", decor.WCSyncSpace),
@@ -385,6 +386,7 @@ func downloadFileWithContext(filename string, downloadDirectory string, p *mpb.P
 			bar: bar,
 		}
 		progressWriter.bar.SetCurrent(int64(fileSize))
+		bar.Completed()
 
 		if UseWebserver {
 			updateFileByName(ProgessFiles, filepath.Base(returnFilePathWithoutBytes(filename)), fileSize, 100, 9)
@@ -441,6 +443,10 @@ func (pw *progressWriter) Write(p []byte) (int, error) {
 				progressUpdateTime = time.Now()
 			}
 		}
+	}
+
+	if progress == 100 {
+		pw.bar.Completed()
 	}
 
 	return n, err

@@ -55,7 +55,6 @@
 			const data = JSON.parse(event.data);
 			
 			if (data.server) {
-				
 				const downloadTitle = document.getElementById('download_title');
 				const downloadRelease = document.getElementById('download_release');
 				const downloadProgress = document.getElementById('download_progress');
@@ -64,11 +63,10 @@
 				downloadRelease.textContent = data.server.Name;
 				downloadProgress.textContent = `${data.server.Progress.toFixed(2)}% (${formatBytes(data.server.Loaded)} / ${formatBytes(data.server.Total)})`;
 				downloadProgress.style.background = `linear-gradient(to right, #4caf50 ${data.server.Progress.toFixed(2)}%, #f3f3f3 ${data.server.Progress.toFixed(2)}%)`;
-				
 			} else if (data.files) {
 				let existingItem = document.getElementById(`${data.files.Name}`);
 
-                if (existingItem) {
+				if (existingItem) {
 					progressBarUpdate(
 					  `${data.files.Name}`,
 					  `${data.files.Progress.toFixed(2)}`,
@@ -79,8 +77,8 @@
 				} else {
 				
 					const loaded = data.files.Loaded !== undefined ? data.files.Loaded : 0;
-                    const progress = data.files.Progress !== undefined ? data.files.Progress.toFixed(2) : 0;
-                    const status = data.files.Status !== undefined ? data.files.Status : 0;
+					const progress = data.files.Progress !== undefined ? data.files.Progress.toFixed(2) : 0;
+					const status = data.files.Status !== undefined ? data.files.Status : 0;
 					
 					addDownloadBlock( `${data.files.Name}`, `${progress}`, `${status}` );
 					
@@ -91,6 +89,13 @@
 		} catch (e) {
 			console.error("Error parsing event data:", e);
 		}
+	}
+
+	function resetDownloads() {
+		const downloadTitle = document.getElementById('download_title');
+		downloadTitle.style.display = "none";
+		const downloadFilesDiv = document.getElementById('download_files');
+		downloadFilesDiv.innerHTML = '';
 	}
 
 	let startStopButtonStatus = "none"
@@ -151,10 +156,9 @@
 		try {
 			const response = await fetch(useURL);
 			if (!response.ok) {
-				throw new Error(`HTTP-Fehler: ${response.status}`);
+				throw new Error(`HTTP-Error: ${response.status}`);
 			}
 			const data = await response.json();
-			console.log('Daten erhalten:', data);
 		} catch (error) {
 			console.error('error calling url:', error);
 		}
@@ -163,6 +167,10 @@
 	function addLogEntry(entry) {
 		if (logEntries.includes(entry)) {
 			return;
+		}
+
+		if (entry.toLowerCase().includes("successfully downloaded:")) {
+			resetDownloads();
 		}
 
 		logEntries.push(entry);
