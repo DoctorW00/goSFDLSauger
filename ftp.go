@@ -3,7 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/jlaffaye/ftp"
+	"github.com/vbauerster/mpb/v8"
+	"github.com/vbauerster/mpb/v8/decor"
+	"golang.org/x/net/proxy"
 	"io"
+	"net"
 	"os"
 	"path"
 	"path/filepath"
@@ -11,10 +16,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/jlaffaye/ftp"
-	"github.com/vbauerster/mpb/v8"
-	"github.com/vbauerster/mpb/v8/decor"
 )
 
 type ProgressGlobal struct {
@@ -65,11 +66,51 @@ func resetFTPGlobals() {
 	downloadQueue = nil
 }
 
+func getProxyDialer(network, ftpAddress string) (net.Conn, error) {
+	proxyAddress := fmt.Sprintf("%s:%d", ftpProxy_IP, ftpProxy_Port)
+
+	if DEBUG {
+		fmt.Println("getProxyDialer network:", network)
+		fmt.Println("getProxyDialer ftpAddress:", ftpAddress)
+		fmt.Println("getProxyDialer proxyAddress:", proxyAddress)
+		fmt.Println("getProxyDialer ftpProxy_IP:", ftpProxy_IP)
+		fmt.Println("getProxyDialer ftpProxy_Port:", ftpProxy_Port)
+		fmt.Println("getProxyDialer ftpProxy_User:", ftpProxy_User)
+		fmt.Println("getProxyDialer ftpProxy_Pass:", ftpProxy_Pass)
+	}
+
+	auth := &proxy.Auth{
+		User:     ftpProxy_User,
+		Password: ftpProxy_Pass,
+	}
+
+	dialer, err := proxy.SOCKS5("tcp", proxyAddress, auth, proxy.Direct)
+	if err != nil {
+		return nil, fmt.Errorf("error creating SOCKS5 dialer: %w", err)
+	}
+
+	conn, err := dialer.Dial(network, ftpAddress)
+	if err != nil {
+		return nil, fmt.Errorf("error connecting to FTP server using SOCKS5 proxy: %v", err)
+	}
+
+	return conn, nil
+}
+
 func GetFTPIndex(ftp_path string) error {
 	resetFTPGlobals()
 
 	ftpAddress := fmt.Sprintf("%s:%d", Server_Host, Server_Port)
-	ftpClient, err := ftp.Dial(ftpAddress)
+
+	var ftpClient *ftp.ServerConn
+	var err error
+
+	if UseFTPProxy {
+		ftpClient, err = ftp.Dial(ftpAddress, ftp.DialWithDialFunc(getProxyDialer))
+	} else {
+		ftpClient, err = ftp.Dial(ftpAddress)
+	}
+
 	if err != nil {
 		fmt.Println("Error: FTP Server: ", err)
 		return err
@@ -276,7 +317,16 @@ func downloadFileWithContext(filename string, downloadDirectory string, p *mpb.P
 	}()
 
 	ftpAddress := fmt.Sprintf("%s:%d", Server_Host, Server_Port)
-	ftpClient, err := ftp.Dial(ftpAddress, ftp.DialWithContext(ctx))
+
+	var ftpClient *ftp.ServerConn
+	var err error
+
+	if UseFTPProxy {
+		ftpClient, err = ftp.Dial(ftpAddress, ftp.DialWithContext(ctx), ftp.DialWithDialFunc(getProxyDialer))
+	} else {
+		ftpClient, err = ftp.Dial(ftpAddress, ftp.DialWithContext(ctx))
+	}
+
 	if err != nil {
 		return err
 	}

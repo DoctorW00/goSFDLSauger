@@ -7,6 +7,7 @@ require (
 	github.com/jlaffaye/ftp v0.2.0
 	github.com/nwaples/rardecode v1.1.3
 	github.com/vbauerster/mpb/v8 v8.8.3
+	golang.org/x/net v0.27.0
 )
 
 require (
@@ -17,7 +18,6 @@ require (
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/mattn/go-runewidth v0.0.16 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
-	golang.org/x/net v0.27.0 // indirect
 	golang.org/x/sync v0.7.0 // indirect
 	golang.org/x/sys v0.27.0 // indirect
 )

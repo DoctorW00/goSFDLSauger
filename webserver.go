@@ -196,6 +196,7 @@ func (s *Server) Start() {
 	http.HandleFunc("/change-password", changePasswordHandler)
 	http.HandleFunc("/upload", uploadHandler)
 	http.HandleFunc("/files", fileHandler)
+	http.HandleFunc("/logs", logsHandler)
 	http.HandleFunc("/delete", deleteHandler)
 	http.HandleFunc("/sendMQTT", sendMQTTHandler)
 	http.HandleFunc("/start-stop-status", func(w http.ResponseWriter, r *http.Request) {
@@ -456,7 +457,7 @@ func eventsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// logs
-		for _, log := range LoaderLogs {
+		for _, log := range DownloadLogs {
 			logs, err := json.Marshal(log)
 			if err != nil {
 				http.Error(w, "failed to encode logs data", http.StatusInternalServerError)
@@ -467,6 +468,23 @@ func eventsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		time.Sleep(1 * time.Second)
+	}
+}
+
+func logsHandler(w http.ResponseWriter, r *http.Request) {
+	cookie, err := r.Cookie("session")
+	if err != nil || !sessions[cookie.Value] {
+		sendServerResponseJson("error", "unauthorized", w)
+		return
+	}
+
+	for _, log := range LoaderLogs {
+		logs, err := json.Marshal(log)
+		if err != nil {
+			http.Error(w, "failed to encode logs data", http.StatusInternalServerError)
+			return
+		}
+		fmt.Fprintf(w, "data: {\"logs\": %s}\n\n", logs)
 	}
 }
 

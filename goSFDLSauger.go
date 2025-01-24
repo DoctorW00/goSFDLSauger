@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-var VERSION string = "1.2.2"
+var VERSION string = "1.2.3"
 var DEBUG bool = false
 var SFDLPassword string = "mlcboard.com"
 var DestinationDownloadPath string
@@ -25,11 +25,17 @@ var UseWebserver bool = false
 var UseWebserverHost = "0.0.0.0"
 var UseWebserverPort = 8080
 var LoaderLogs []string
+var DownloadLogs []string
 var UseMQTT = false
 var mqtt_Broker = ""
 var mqtt_Topic = "goSFDLSauger"
 var mqtt_User = ""
 var mqtt_Pass = ""
+var UseFTPProxy = false
+var ftpProxy_IP = ""
+var ftpProxy_Port int16
+var ftpProxy_User = ""
+var ftpProxy_Pass = ""
 
 var wgLoader sync.WaitGroup
 var isDownloadRunning bool = false // true if the download cycle is running
@@ -46,18 +52,39 @@ func main() {
 	sfdl_password := flag.String("p", "", "SFDL Password")
 	max_threds := flag.Int("t", 3, "Max. Download Threads")
 	useUnRARUnZip := flag.Bool("u", true, "Use UnRAR / UnZIP")
+
+	// WebGUI
 	useWebserver := flag.Bool("www", false, "Webserver GUI (false)")
 	webserverHost := flag.String("www_host", "0.0.0.0", "Webserver IP/Host (0.0.0.0)")
 	webserverPort := flag.Int("www_port", 8080, "Webserver Port (8080)")
+
+	// MQTT
 	mqttBroker := flag.String("mqtt_Broker", "", "MQTT Broker (tcp://127.0.0.1:1883)")
 	mqttTopic := flag.String("mqtt_Topic", "", "MQTT Topic")
 	mqttUser := flag.String("mqtt_User", "", "MQTT Username")
 	mqttPass := flag.String("mqtt_Pass", "", "MQTT Password/Token")
 
+	// FTP proxy
+	ftpProxyIP := flag.String("ftpProxy_IP", "", "IP/DNS FTP Proxy (SOCKS5)")
+	ftpProxyPort := flag.Int("ftpProxy_Port", 0, "FTP Proxy Port")
+	ftpProxyUser := flag.String("ftpProxy_User", "", "FTP Proxy Username")
+	ftpProxyPass := flag.String("ftpProxy_Pass", "", "FTP Proxy Password")
+
 	flag.Parse()
 
 	errors := 0
 	sfdl_file := ""
+
+	if *ftpProxyIP != "" && *ftpProxyPort != 0 {
+		UseFTPProxy = true
+		ftpProxy_IP = *ftpProxyIP
+		ftpProxy_Port = int16(*ftpProxyPort)
+
+		if *ftpProxyUser != "" && *ftpProxyPass != "" {
+			ftpProxy_User = *ftpProxyUser
+			ftpProxy_Pass = *ftpProxyPass
+		}
+	}
 
 	if *mqttBroker != "" {
 		UseMQTT = true
@@ -225,6 +252,7 @@ func StartTango(wgTango *sync.WaitGroup, sfdl_file string) {
 	defer wgTango.Done()
 
 	resetSFDLGlobals()
+	resetFTPGlobals()
 	gotErrors := 0
 
 	_, chkerr := os.Stat(sfdl_file)
@@ -248,11 +276,26 @@ func StartTango(wgTango *sync.WaitGroup, sfdl_file string) {
 			AddLoaderLog("FTP Index for: " + Server_Name)
 
 			for _, path := range Server_Path {
-				err := GetFTPIndex(path)
-				if err != nil {
-					fmt.Println("Error: FTP Index-Error:", err)
-					AddLoaderLog(fmt.Sprintln("Error: FTP Index-Error:", err))
-					gotErrors++
+				var retryCounter = 0
+				for {
+					err = GetFTPIndex(path)
+					if err != nil {
+						newError := err.Error()
+						if strings.HasPrefix(newError, "553") || strings.HasPrefix(newError, "530") || strings.HasPrefix(newError, "421") {
+							if DEBUG {
+								fmt.Println("ftp index error (pyro server?):", newError)
+							}
+							retryCounter++
+							fmt.Printf("Retry [%d] FTP Index for: %s\n", retryCounter, newError)
+							AddLoaderLog(fmt.Sprintf("Retry [%d] FTP Index for: %s\n", retryCounter, newError))
+							time.Sleep(1 * time.Second)
+						} else {
+							gotErrors++
+							break
+						}
+					} else {
+						break
+					}
 				}
 			}
 
@@ -272,13 +315,30 @@ func StartTango(wgTango *sync.WaitGroup, sfdl_file string) {
 				fmt.Printf("Loading %d files (%s) using %d threads!\n", len(Server_File), FormatBytes(Download_Size), MaxConcurrentDownloads)
 				AddLoaderLog(fmt.Sprintf("Loading %d files (%s) using %d threads!\n", len(Server_File), FormatBytes(Download_Size), MaxConcurrentDownloads))
 
-				err2 := InitializeFTPDownloads()
-				if err2 != nil {
-					fmt.Printf("error: FTP Download error: %v\n", err2)
-					AddLoaderLog(fmt.Sprintf("error: FTP Download error: %v\n", err2))
-					gotErrors++
-					if UseWebserver {
-						ProgressGlobals[0].Status = 3
+				var retryCounter2 = 0
+				for {
+					err2 := InitializeFTPDownloads()
+					if err2 != nil {
+						newError := err2.Error()
+						if strings.HasPrefix(newError, "553") || strings.HasPrefix(newError, "530") || strings.HasPrefix(newError, "421") {
+							if DEBUG {
+								fmt.Println("ftp download error (pyro server?):", newError)
+							}
+							retryCounter2++
+							fmt.Printf("Retry [%d] FTP download: %s\n", retryCounter2, newError)
+							AddLoaderLog(fmt.Sprintf("Retry [%d] FTP download: %s\n", retryCounter2, newError))
+							time.Sleep(1 * time.Second)
+						} else {
+							fmt.Printf("error: FTP Download error: %s\n", newError)
+							AddLoaderLog(fmt.Sprintf("error: FTP Download error: %s\n", newError))
+							gotErrors++
+							if UseWebserver {
+								ProgressGlobals[0].Status = 3
+							}
+							break
+						}
+					} else {
+						break
 					}
 				}
 
@@ -375,6 +435,7 @@ func StartTango(wgTango *sync.WaitGroup, sfdl_file string) {
 	time.Sleep(2 * time.Second)
 	resetSFDLGlobals()
 	resetFTPGlobals()
+	DownloadLogs = []string{}
 	time.Sleep(1 * time.Second)
 
 	if gotErrors != 0 {
@@ -523,6 +584,7 @@ func createSpeedReport(filePath string, lines []string) error {
 
 func AddLoaderLog(logLine string) {
 	LoaderLogs = append(LoaderLogs, "["+time.Now().Format("2006-01-02 15:04:05")+"] "+logLine)
+	DownloadLogs = append(DownloadLogs, "["+time.Now().Format("2006-01-02 15:04:05")+"] "+logLine)
 	if UseMQTT {
 		SendMQTTMsg(logLine, "logs")
 	}
