@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-var VERSION string = "1.2.3"
+var VERSION string = "1.2.4"
 var DEBUG bool = false
 var SFDLPassword string = "mlcboard.com"
 var DestinationDownloadPath string
@@ -36,6 +36,7 @@ var ftpProxy_IP = ""
 var ftpProxy_Port int16
 var ftpProxy_User = ""
 var ftpProxy_Pass = ""
+var ftp_Timeouts = 30 * time.Second
 
 var wgLoader sync.WaitGroup
 var isDownloadRunning bool = false // true if the download cycle is running
@@ -70,10 +71,17 @@ func main() {
 	ftpProxyUser := flag.String("ftpProxy_User", "", "FTP Proxy Username")
 	ftpProxyPass := flag.String("ftpProxy_Pass", "", "FTP Proxy Password")
 
+	// ftp timeouts
+	ftpTimeouts := flag.Duration("ftpTimeouts", 30*time.Second, "FTP timeout in seconds")
+
 	flag.Parse()
 
 	errors := 0
 	sfdl_file := ""
+
+	if *ftpTimeouts != 0 {
+		ftp_Timeouts = *ftpTimeouts
+	}
 
 	if *ftpProxyIP != "" && *ftpProxyPort != 0 {
 		UseFTPProxy = true

@@ -106,9 +106,24 @@ func GetFTPIndex(ftp_path string) error {
 	var err error
 
 	if UseFTPProxy {
-		ftpClient, err = ftp.Dial(ftpAddress, ftp.DialWithDialFunc(getProxyDialer))
+		if DEBUG {
+			ftpClient, err = ftp.Dial(ftpAddress,
+				ftp.DialWithDialFunc(getProxyDialer),
+				ftp.DialWithTimeout(ftp_Timeouts),
+				ftp.DialWithDisabledEPSV(true),
+				ftp.DialWithDebugOutput(os.Stdout))
+		} else {
+			ftpClient, err = ftp.Dial(ftpAddress,
+				ftp.DialWithDialFunc(getProxyDialer),
+				ftp.DialWithTimeout(ftp_Timeouts),
+				ftp.DialWithDisabledEPSV(true))
+		}
 	} else {
-		ftpClient, err = ftp.Dial(ftpAddress)
+		if DEBUG {
+			ftpClient, err = ftp.Dial(ftpAddress, ftp.DialWithTimeout(ftp_Timeouts))
+		} else {
+			ftpClient, err = ftp.Dial(ftpAddress, ftp.DialWithTimeout(ftp_Timeouts), ftp.DialWithDebugOutput(os.Stdout))
+		}
 	}
 
 	if err != nil {
@@ -322,9 +337,26 @@ func downloadFileWithContext(filename string, downloadDirectory string, p *mpb.P
 	var err error
 
 	if UseFTPProxy {
-		ftpClient, err = ftp.Dial(ftpAddress, ftp.DialWithContext(ctx), ftp.DialWithDialFunc(getProxyDialer))
+		if DEBUG {
+			ftpClient, err = ftp.Dial(ftpAddress,
+				ftp.DialWithContext(ctx),
+				ftp.DialWithDialFunc(getProxyDialer),
+				ftp.DialWithTimeout(ftp_Timeouts),
+				ftp.DialWithDisabledEPSV(true),
+				ftp.DialWithDebugOutput(os.Stdout))
+		} else {
+			ftpClient, err = ftp.Dial(ftpAddress,
+				ftp.DialWithContext(ctx),
+				ftp.DialWithDialFunc(getProxyDialer),
+				ftp.DialWithTimeout(ftp_Timeouts),
+				ftp.DialWithDisabledEPSV(true))
+		}
 	} else {
-		ftpClient, err = ftp.Dial(ftpAddress, ftp.DialWithContext(ctx))
+		if DEBUG {
+			ftpClient, err = ftp.Dial(ftpAddress, ftp.DialWithContext(ctx), ftp.DialWithTimeout(ftp_Timeouts), ftp.DialWithDebugOutput(os.Stdout))
+		} else {
+			ftpClient, err = ftp.Dial(ftpAddress, ftp.DialWithContext(ctx), ftp.DialWithTimeout(ftp_Timeouts))
+		}
 	}
 
 	if err != nil {
