@@ -120,9 +120,9 @@ func GetFTPIndex(ftp_path string) error {
 		}
 	} else {
 		if DEBUG {
-			ftpClient, err = ftp.Dial(ftpAddress, ftp.DialWithTimeout(ftp_Timeouts))
-		} else {
 			ftpClient, err = ftp.Dial(ftpAddress, ftp.DialWithTimeout(ftp_Timeouts), ftp.DialWithDebugOutput(os.Stdout))
+		} else {
+			ftpClient, err = ftp.Dial(ftpAddress, ftp.DialWithTimeout(ftp_Timeouts))
 		}
 	}
 
