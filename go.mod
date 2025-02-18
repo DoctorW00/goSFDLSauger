@@ -8,6 +8,8 @@ require (
 	github.com/nwaples/rardecode v1.1.3
 	github.com/vbauerster/mpb/v8 v8.8.3
 	golang.org/x/net v0.27.0
+	golang.org/x/time v0.10.0
+	gopkg.in/yaml.v2 v2.4.0
 )
 
 require (

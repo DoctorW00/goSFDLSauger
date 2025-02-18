@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>goSFDLSauger WebGUI</title>
+    <title>Files</title>
 	<link rel="stylesheet" href="css/sauger.css">
 </head>
 <body>
@@ -14,6 +14,7 @@
             <ul>
 				<li><a href="/index.html">Downloads</a></li>
 				<li><a href="/password.html">Change Password</a></li>
+				<li><a href="/config">Config</a></li>
                 <li><a href="/logout" class="logout">LogOut</a></li>
             </ul>
         </nav>
@@ -21,8 +22,10 @@
 
 	<main>
 	
+	{{- $csrfToken := .CSRFToken | html -}}
+	
 	<ul class="breadcrumb">
-		<li><a href="/files">Files</a></li>
+		<li><a href="/files">Files</a></li> 
 		{{if .PathParts}}
 			{{- $path := "" -}}
 			{{range $index, $part := .PathParts}}
@@ -31,7 +34,7 @@
 				{{- else}}
 					{{- $path = $part }}
 				{{- end}}
-				<li><a href="/files?path={{$path}}">{{$part}}</a></li>
+				<li><a href="/files?path={{$path}}&csrf={{$csrfToken}}">{{$part}}</a></li>
 			{{end}}
 		{{end}}
 	</ul>
@@ -40,9 +43,9 @@
         {{range .Files}}
             <li>
                 {{if .IsDir}}
-                    <b>[Path]</b> <a href="/files?path={{.Path}}">{{.Name}}</a> <a onclick="deleteFile('{{.Path}}')" href="#">(X)</a>
+                    <b>[Path]</b> <a href="/files?path={{.Path}}&csrf={{$csrfToken}}">{{.Name}}</a> <a onclick="deleteFile('{{.Path}}')" href="#">(X)</a>
                 {{else}}
-                    <b>{{.Name}} ({{.Size}})</b> <a href="/files?dl={{.Path}}">[Download]</a> <a onclick="deleteFile('{{.Path}}')" href="#">(X)</a>
+                    <b>{{.Name}} ({{.Size}})</b> <a href="/files?dl={{.Path}}&csrf={{$csrfToken}}">[Download]</a> <a onclick="deleteFile('{{.Path}}')" href="#">(X)</a>
                 {{end}}
             </li>
         {{end}}
@@ -51,14 +54,14 @@
 	</main>
 
     <footer>
-        <p>&copy; GrafSauger<br /><small>Nur die harten Sauger kommen durch!</small></p>
+        <p>&copy; GrafSauger | goSFDLSauger v{{.VERSION}}<br /><small>Nur die harten Sauger kommen durch!</small></p>
     </footer>
 	
 	<script>
         function deleteFile(path) {
             const confirmDelete = confirm(`Really delete "${path}"?`);
             if (confirmDelete) {
-                fetch(`/delete?path=${encodeURIComponent(path)}`, {
+                fetch(`/delete?path=${encodeURIComponent(path)}&csrf={{$csrfToken}}`, {
                     method: 'DELETE'
                 })
                 .then(response => {

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>goSFDLSauger WebGUI</title>
+    <title>Downloads</title>
 	<link rel="stylesheet" href="css/sauger.css">
 </head>
 <body>
@@ -14,6 +14,7 @@
             <ul>
 				<li><a href="/files">Files</a></li>
 				<li><a href="/password.html">Change Password</a></li>
+				<li><a href="/config">Config</a></li>
                 <li><a href="/logout" class="logout">LogOut</a></li>
             </ul>
         </nav>
@@ -26,6 +27,7 @@
 	<div class="drop-area" id="drop-area">
 		<p>Drop file(s) here or click to upload</p>
 		<input type="file" id="fileInput" name="fileInput" accept=".sfdl" multiple style="display: none;">
+		<input type="hidden" name="_csrf" value="{{.CSRFToken}}">
 	</div>
 	
 	<div class="file-list" id="fileList"></div>
@@ -43,7 +45,7 @@
 	</main>
 
     <footer>
-        <p>&copy; GrafSauger<br /><small>Nur die harten Sauger kommen durch!</small></p>
+        <p>&copy; GrafSauger | goSFDLSauger v{{.VERSION}}<br /><small>Nur die harten Sauger kommen durch!</small></p>
     </footer>
 
     <script>
@@ -150,9 +152,6 @@
 			useURL = url_stop;
 		}
 		
-		console.log('startStopButtonStatus:', startStopButtonStatus);
-		console.log("useURL:", useURL);
-		
 		try {
 			const response = await fetch(useURL);
 			if (!response.ok) {
@@ -237,6 +236,9 @@
 			const response = await fetch("/upload", {
 				method: "POST",
 				body: formData,
+				headers: {
+					"X-CSRF-Token": {{.CSRFToken}} 
+				}
 			});
 
 			responseMessage.style.color = response.ok ? "green" : "red";

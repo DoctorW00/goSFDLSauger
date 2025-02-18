@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Config</title>
+	<link rel="stylesheet" href="css/sauger.css">
+</head>
+<body>
+<header>
+        <h1 class="logotext">goSFDLSauger WebGUI</h1>
+        <nav>
+            <ul>
+				<li><a href="/index.html">Downloads</a></li>
+				<li><a href="/files">Files</a></li>
+				<li><a href="/password.html">Change Password</a></li>
+                <li><a href="/logout" class="logout">LogOut</a></li>
+            </ul>
+        </nav>
+    </header>
+
+	<main>
+    {{- $csrfToken := .CSRFToken | html -}}
+    <form method="POST" action="/config-update">
+        {{ range .Fields }}
+            {{ if eq .Type "category" }}
+                <fieldset>
+                    <legend>{{ .Label }}</legend>
+                    {{ range .Subfields }}
+                        <label for="{{ .ID }}">{{ .Label }}:</label>
+                        {{ if eq .Type "checkbox" }}
+                            <input type="checkbox" id="{{ .ID }}_checkbox" name="{{ .ID }}_checkbox"{{ if eq .Value "true"}} checked{{ else }}{{ end }}><br />
+                        {{ else if eq .Type "text" }}
+                            <input type="text" id="{{ .ID }}" name="{{ .ID }}" value="{{ .Value }}">
+                        {{ else if eq .Type "number" }}
+                            <input type="number" id="{{ .ID }}" name="{{ .ID }}" value="{{ .Value }}">
+                        {{ end }}
+                        <br />
+                    {{ end }}
+                </fieldset>
+            {{ else }}
+                <label for="{{ .ID }}">{{ .Label }}:</label>
+                {{ if eq .Type "checkbox" }}
+                    <input type="checkbox" id="{{ .ID }}_checkbox" name="{{ .ID }}_checkbox"{{ if eq .Value "true" }} checked{{ else }}{{ end }}><br />
+                {{ else if eq .Type "text" }}
+                    <input type="text" id="{{ .ID }}" name="{{ .ID }}" value="{{ .Value }}">
+                {{ else if eq .Type "number" }}
+                    <input type="number" id="{{ .ID }}" name="{{ .ID }}" value="{{ .Value }}">
+                {{ end }}
+                <br />
+            {{ end }}
+        {{ end }}
+        <input type="hidden" name="_csrf" value="{{ .CSRFToken }}">
+        <input type="submit" value="save config">
+    </form>
+	</main>
+
+    <footer>
+        <p>&copy; GrafSauger | goSFDLSauger v{{.VERSION}}<br /><small>Nur die harten Sauger kommen durch!</small></p>
+    </footer>
+</body>
+</html>
+

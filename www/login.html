@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>goSFDLSauger WebGUI</title>
+    <title>LogIn</title>
     <style>
        body {
 			font-family: Arial, sans-serif;
@@ -119,39 +119,47 @@
 	</main>
 	
 	<footer>
-        <p>&copy; GrafSauger<br /><small>Nur die harten Sauger kommen durch!</small></p>
+        <p>&copy; GrafSauger | goSFDLSauger v{{.VERSION}}<br /><small>Nur die harten Sauger kommen durch!</small></p>
     </footer>
 
     <script>
-        document.getElementById("password").focus();
-		document.getElementById("loginForm").addEventListener("submit", async function(event) {
-            event.preventDefault();
+        document.getElementById("loginForm").addEventListener("submit", async function(event) {
+		event.preventDefault();
 
-            const password = document.getElementById("password").value;
+		const password = document.getElementById("password").value;
 
-            const response = await fetch(window.location.href, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/x-www-form-urlencoded",
-                },
-                body: new URLSearchParams({ password }),
-            });
+		const response = await fetch(window.location.href, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/x-www-form-urlencoded"
+			},
+			body: new URLSearchParams({ 
+				password
+			}),
+			credentials: 'include'
+		});
 
-            const errorMessageElement = document.getElementById("errorMessage");
-            const passwordField = document.getElementById("password");
+		const errorMessageElement = document.getElementById("errorMessage");
+		const passwordField = document.getElementById("password");
+		
+		if (response.ok) {
+			window.location.href = "/index.html";
+		} else {
+			try {
+				const errorMessage = await response.json();
+				errorMessageElement.textContent = errorMessage.status + ": " + errorMessage.message;
+				errorMessageElement.style.display = "block";
+			} catch (err) {
+				errorMessageElement.textContent = "error: " + err;
+				errorMessageElement.style.display = "block";
+			}
+			
+			passwordField.classList.add("error");
+			passwordField.value = "";
+			passwordField.focus();
+		}
+	});
 
-            if (response.ok) {
-                window.location.href = "/index.html";
-            } else {
-                const errorMessage = await response.json();
-                errorMessageElement.textContent = errorMessage.error;
-                errorMessageElement.style.display = "block";
-                passwordField.classList.add("error");
-                
-                passwordField.value = "";
-                passwordField.focus();
-            }
-        });
     </script>
 </body>
 </html>

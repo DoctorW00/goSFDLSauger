@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-var VERSION string = "1.2.5"
+var VERSION string = "1.2.6"
 var DEBUG bool = false
 var SFDLPassword string = "mlcboard.com"
 var DestinationDownloadPath string
@@ -37,6 +37,8 @@ var ftpProxy_Port int16
 var ftpProxy_User = ""
 var ftpProxy_Pass = ""
 var ftp_Timeouts = 30 * time.Second
+var CONFIG_File = ""
+var UseConfig = false
 
 var wgLoader sync.WaitGroup
 var isDownloadRunning bool = false // true if the download cycle is running
@@ -74,145 +76,355 @@ func main() {
 	// ftp timeouts
 	ftpTimeouts := flag.Duration("ftpTimeouts", 30*time.Second, "FTP timeout in seconds")
 
+	// config
+	loadConfigFile := flag.String("config", "", "Load YAML config (/config.yaml)")
+
 	flag.Parse()
 
 	errors := 0
 	sfdl_file := ""
 
-	if *ftpTimeouts != 0 {
-		ftp_Timeouts = *ftpTimeouts
-	}
+	// load or create config
+	if *loadConfigFile != "" {
+		CONFIG_File = *loadConfigFile
 
-	if *ftpProxyIP != "" && *ftpProxyPort != 0 {
-		UseFTPProxy = true
-		ftpProxy_IP = *ftpProxyIP
-		ftpProxy_Port = int16(*ftpProxyPort)
-
-		if *ftpProxyUser != "" && *ftpProxyPass != "" {
-			ftpProxy_User = *ftpProxyUser
-			ftpProxy_Pass = *ftpProxyPass
-		}
-	}
-
-	if *mqttBroker != "" {
-		UseMQTT = true
-		mqtt_Broker = *mqttBroker
-
-		if *mqttTopic != "" {
-			mqtt_Topic = *mqttTopic
-		}
-
-		if *mqttUser != "" {
-			mqtt_User = *mqttUser
-
-			if *mqttPass != "" {
-				mqtt_Pass = *mqttPass
-			}
-		}
-
-		go func() {
-			err := startMQTTClient()
+		// load config file
+		if fileExists(CONFIG_File) {
+			err := loadConfig(CONFIG_File)
 			if err != nil {
+				UseConfig = false
 				fmt.Println(err)
+			} else {
+				UseConfig = true
+				fmt.Println("using config:", CONFIG_File)
 			}
-		}()
+		}
 
-		time.Sleep(2 * time.Second)
+		// create default config file from user input path
+		if !UseConfig {
+			confDir, confErr := os.UserConfigDir()
+			if confErr != nil {
+				confDir = "."
+			}
+			CONFIG_File = filepath.Join(confDir, "/goSFDLSauger/config.yaml")
+
+			if fileExists(CONFIG_File) {
+				err := loadConfig(CONFIG_File)
+				if err == nil {
+					UseConfig = true
+					fmt.Println("using config:", CONFIG_File)
+				} else {
+					UseConfig = true
+				}
+			} else {
+				err := createDefaultConfig(CONFIG_File)
+				if err != nil {
+					UseConfig = false
+					fmt.Println(err)
+				} else {
+					UseConfig = true
+					fmt.Println("using new config:", CONFIG_File)
+				}
+			}
+		}
+
+		// create default config file in system default path
+		if !UseConfig {
+			newUserCDir, err := os.UserConfigDir()
+			if err != nil {
+				newUserCDir = "."
+			}
+			if newUserCDir != "." {
+				newUserCDir = filepath.Join(newUserCDir, "/goSFDLSauger/config.yaml")
+			}
+			err = createDefaultConfig(newUserCDir)
+			if err != nil {
+				UseConfig = false
+				fmt.Println(err)
+			} else {
+				UseConfig = true
+				CONFIG_File = newUserCDir
+				fmt.Println("created new default config:", CONFIG_File)
+
+				// load new config
+				if fileExists(CONFIG_File) {
+					err := loadConfig(CONFIG_File)
+					if err != nil {
+						UseConfig = false
+						fmt.Println(err)
+					} else {
+						UseConfig = true
+						fmt.Println("using new default config:", CONFIG_File)
+					}
+				}
+			}
+		}
 	}
 
-	if *useWebserver {
-		UseWebserver = true
-		if *webserverHost != "0.0.0.0" {
-			UseWebserverHost = *webserverHost
+	// set config options
+	if UseConfig {
+		// debug
+		if config.GoSFDLSauger.Debug {
+			DEBUG = true
 		}
-		if *webserverPort != 8080 {
-			UseWebserverPort = *webserverPort
+
+		// sfdl-file password
+		if config.GoSFDLSauger.SFDLPassword != "" {
+			SFDLPassword = config.GoSFDLSauger.SFDLPassword
 		}
-		wgLoader.Add(1)
-		go GoWebserver(UseWebserverPort, UseWebserverHost)
-	} else {
-		UseWebserver = false
+
+		// sfdl file location
+		if config.GoSFDLSauger.SFDLInput != "" {
+			fileInfo, err := os.Stat(config.GoSFDLSauger.SFDLInput)
+			if err != nil {
+				fmt.Println("error SFDL file or path:", err)
+				errors++
+			}
+
+			// check if we got a file, path or symbolic link etc
+			if errors == 0 {
+				if fileInfo.Mode().IsDir() {
+					FillSFDLFilesArray(config.GoSFDLSauger.SFDLInput, "")
+				} else if fileInfo.Mode().IsRegular() {
+					FillSFDLFilesArray(filepath.Dir(config.GoSFDLSauger.SFDLInput), "")
+				} else {
+					fmt.Println("sfdl input is not a real file or path:", config.GoSFDLSauger.SFDLInput)
+					errors++
+				}
+			}
+
+			if errors == 0 {
+				if len(SFDL_Files) > 0 {
+					sfdl_file = SFDL_Files[0]
+					fmt.Println("SFDL: " + sfdl_file)
+					AddLoaderLog("SFDL: " + sfdl_file)
+				} else {
+					fmt.Println("error: no SFDL files found in: " + config.GoSFDLSauger.SFDLInput)
+					AddLoaderLog("error: no SFDL files found in: " + config.GoSFDLSauger.SFDLInput)
+					errors++
+				}
+			}
+		}
+
+		// download destination
+		if config.GoSFDLSauger.Destination != "" {
+			DestinationDownloadPath = config.GoSFDLSauger.Destination
+		}
+
+		// set max threads
+		if config.GoSFDLSauger.MaxThreads != 0 {
+			MaxConcurrentDownloads = config.GoSFDLSauger.MaxThreads
+		}
+
+		// UnRAR & UnZIP
+		if !config.GoSFDLSauger.UseUnrar {
+			UseUNRARUnZIP = false
+		}
+
+		// ftp timeouts
+		if config.GoSFDLSauger.FTPTimeout != 0 {
+			ftp_Timeouts = time.Duration(config.GoSFDLSauger.FTPTimeout) * time.Second
+		}
+
+		// ftp socks5 proxy
+		if config.Socks5.UseSocks5 {
+			if config.Socks5.SocksHost != "" && isValidPort(config.Socks5.SocksPort) {
+				UseFTPProxy = true
+				ftpProxy_IP = config.Socks5.SocksHost
+				ftpProxy_Port = int16(config.Socks5.SocksPort)
+
+				if config.Socks5.SocksUser != "" && config.Socks5.SocksPass != "" {
+					ftpProxy_User = config.Socks5.SocksUser
+					ftpProxy_Pass = config.Socks5.SocksPass
+				}
+			}
+		}
+
+		// MQTT
+		if config.Mqtt.UseMqtt {
+			UseMQTT = true
+			if config.Mqtt.Broker != "" {
+				mqtt_Broker = config.Mqtt.Broker
+
+				if config.Mqtt.Topic != "" {
+					mqtt_Topic = config.Mqtt.Topic
+				}
+
+				if config.Mqtt.MqttUser != "" {
+					mqtt_User = config.Mqtt.MqttUser
+				}
+
+				if config.Mqtt.MqttPass != "" {
+					mqtt_Pass = config.Mqtt.MqttPass
+				}
+
+				// start mqtt client
+				go func() {
+					err := startMQTTClient()
+					if err != nil {
+						fmt.Println(err)
+					}
+				}()
+
+				time.Sleep(2 * time.Second)
+			} else {
+				fmt.Println("error: no mqtt broker in config file")
+				AddLoaderLog("error: no mqtt broker in config file")
+				errors++
+			}
+		}
+
+		// webserver
+		if config.WebServer.UseWebserver {
+			UseWebserver = true
+			if config.WebServer.WWWHost != "0.0.0.0" {
+				UseWebserverHost = config.WebServer.WWWHost
+			}
+			if config.WebServer.WWWPort != 8080 {
+				UseWebserverPort = config.WebServer.WWWPort
+			}
+			wgLoader.Add(1)
+			go GoWebserver(UseWebserverPort, UseWebserverHost)
+		}
 	}
 
-	if UseWebserver {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			fmt.Println("error getting users default-home directory:", err)
+	// do not use command line arguments if config is used
+	if !UseConfig {
+		if *ftpTimeouts != 0 {
+			ftp_Timeouts = *ftpTimeouts
 		}
 
-		DestinationDownloadPath = filepath.Join(homeDir + "/Downloads")
-		_, err = os.Stat(DestinationDownloadPath)
-		if os.IsNotExist(err) {
-			DestinationDownloadPath = ""
-			fmt.Println("error users default download directory does not exist:", err)
-		}
-	}
+		if *ftpProxyIP != "" && *ftpProxyPort != 0 {
+			UseFTPProxy = true
+			ftpProxy_IP = *ftpProxyIP
+			ftpProxy_Port = int16(*ftpProxyPort)
 
-	if *input_sfdl == "" {
-		useDestPath := ""
+			if *ftpProxyUser != "" && *ftpProxyPass != "" {
+				ftpProxy_User = *ftpProxyUser
+				ftpProxy_Pass = *ftpProxyPass
+			}
+		}
+
+		if *mqttBroker != "" {
+			UseMQTT = true
+			mqtt_Broker = *mqttBroker
+
+			if *mqttTopic != "" {
+				mqtt_Topic = *mqttTopic
+			}
+
+			if *mqttUser != "" {
+				mqtt_User = *mqttUser
+
+				if *mqttPass != "" {
+					mqtt_Pass = *mqttPass
+				}
+			}
+
+			go func() {
+				err := startMQTTClient()
+				if err != nil {
+					fmt.Println(err)
+				}
+			}()
+
+			time.Sleep(2 * time.Second)
+		}
+
+		if *useWebserver {
+			UseWebserver = true
+			if *webserverHost != "0.0.0.0" {
+				UseWebserverHost = *webserverHost
+			}
+			if *webserverPort != 8080 {
+				UseWebserverPort = *webserverPort
+			}
+			wgLoader.Add(1)
+			go GoWebserver(UseWebserverPort, UseWebserverHost)
+		} else {
+			UseWebserver = false
+		}
+
 		if UseWebserver {
-			useDestPath = filepath.Join(DestinationDownloadPath + "/sfdl_files")
+			homeDir, err := os.UserHomeDir()
+			if err != nil {
+				fmt.Println("error getting users default-home directory:", err)
+			}
+
+			DestinationDownloadPath = filepath.Join(homeDir + "/Downloads")
+			_, err = os.Stat(DestinationDownloadPath)
+			if os.IsNotExist(err) {
+				DestinationDownloadPath = ""
+				fmt.Println("error users default download directory does not exist:", err)
+			}
+		}
+
+		if *input_sfdl == "" {
+			useDestPath := ""
+			if UseWebserver {
+				useDestPath = filepath.Join(DestinationDownloadPath + "/sfdl_files")
+				_, err := os.Stat(useDestPath)
+				if err == nil {
+					FillSFDLFilesArray(useDestPath, "")
+				}
+			} else {
+				cPath, err := GetCurrentPath()
+				if err != nil {
+					fmt.Println("error: local path error: ", err)
+					errors++
+				} else {
+					useDestPath = cPath
+				}
+			}
+
 			_, err := os.Stat(useDestPath)
 			if err == nil {
 				FillSFDLFilesArray(useDestPath, "")
 			}
+
+			if len(SFDL_Files) > 0 {
+				sfdl_file = SFDL_Files[0]
+				fmt.Println("SFDL: " + sfdl_file)
+				AddLoaderLog("SFDL: " + sfdl_file)
+			} else {
+				fmt.Println("error: no SFDL files found in: " + useDestPath)
+				AddLoaderLog("error: no SFDL files found in: " + useDestPath)
+				errors++
+			}
 		} else {
-			cPath, err := GetCurrentPath()
+			sfdl_file = *input_sfdl
+			fmt.Println("SFDL: " + sfdl_file)
+			AddLoaderLog("SFDL: " + sfdl_file)
+		}
+
+		if *download_path == "" && DestinationDownloadPath == "" {
+			currentPath, err := os.Getwd()
 			if err != nil {
-				fmt.Println("error: local path error: ", err)
+				fmt.Println("error finding local path:", err)
 				errors++
 			} else {
-				useDestPath = cPath
+				DestinationDownloadPath = currentPath
+			}
+		} else {
+			if DestinationDownloadPath == "" {
+				DestinationDownloadPath = *download_path
 			}
 		}
 
-		_, err := os.Stat(useDestPath)
-		if err == nil {
-			FillSFDLFilesArray(useDestPath, "")
+		if *sfdl_password != "" {
+			SFDLPassword = *sfdl_password
 		}
 
-		if len(SFDL_Files) > 0 {
-			sfdl_file = SFDL_Files[0]
-			fmt.Println("SFDL: " + sfdl_file)
-			AddLoaderLog("SFDL: " + sfdl_file)
+		if *max_threds > 0 {
+			MaxConcurrentDownloads = *max_threds
+		}
+
+		if *useUnRARUnZip {
+			UseUNRARUnZIP = true
 		} else {
-			fmt.Println("error: no SFDL files found in: " + useDestPath)
-			AddLoaderLog("error: no SFDL files found in: " + useDestPath)
-			errors++
+			UseUNRARUnZIP = false
 		}
-	} else {
-		sfdl_file = *input_sfdl
-		fmt.Println("SFDL: " + sfdl_file)
-		AddLoaderLog("SFDL: " + sfdl_file)
-	}
-
-	if *download_path == "" && DestinationDownloadPath == "" {
-		currentPath, err := os.Getwd()
-		if err != nil {
-			fmt.Println("error finding local path:", err)
-			errors++
-		} else {
-			DestinationDownloadPath = currentPath
-		}
-	} else {
-		if DestinationDownloadPath == "" {
-			DestinationDownloadPath = *download_path
-		}
-	}
-
-	if *sfdl_password != "" {
-		SFDLPassword = *sfdl_password
-	}
-
-	if *max_threds > 0 {
-		MaxConcurrentDownloads = *max_threds
-	}
-
-	if *useUnRARUnZip {
-		UseUNRARUnZIP = true
-	} else {
-		UseUNRARUnZIP = false
-	}
+	} // if not config
 
 	if errors > 0 {
 		if UseWebserver {
@@ -596,4 +808,8 @@ func AddLoaderLog(logLine string) {
 	if UseMQTT {
 		SendMQTTMsg(logLine, "logs")
 	}
+}
+
+func isValidPort(port int) bool {
+	return port >= 1 && port <= 65535
 }

@@ -21,15 +21,24 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
+	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/time/rate"
 )
 
 var WWWServerPort = 8080
 var WWWServerIP = ""
-var sessions = make(map[string]bool)
+
+var WWWRateLimit = rate.Every(time.Second / 2)
+var WWWRateLimit_Times = 5
+
+var sessions = make(map[string]Session)
 var UserHomeDir = "."
 var UserDownloadDir = ""
 
@@ -42,6 +51,11 @@ var superSalt = "WrFESjTOcp0Z7g3"
 
 //go:embed www/**
 var content embed.FS
+
+type Session struct {
+	IsLoggedIn bool
+	CSRFToken  string
+}
 
 type Server struct {
 	Addr    string
@@ -61,6 +75,7 @@ type File struct {
 	IsDir bool
 	Path  string
 	Size  string
+	CSRF  string
 }
 
 type ServerResponse struct {
@@ -162,19 +177,43 @@ func getContentType(filePath string) string {
 func NewServer(addr, cert, key string) *Server {
 	useTLS := false
 	if cert != "" && key != "" {
-		certFile := filepath.Join(UserHomeDir, cert)
-		keyFile := filepath.Join(UserHomeDir, key)
+		var certFile string
+		var keyFile string
+		if UseConfig {
+			if config.WebServer.UseSSL {
+				certFile = filepath.Join(config.WebServer.SSLCertPath)
+				keyFile = filepath.Join(config.WebServer.SSLKeyPath)
+			}
+		} else {
+			certFile = filepath.Join(UserHomeDir, cert)
+			keyFile = filepath.Join(UserHomeDir, key)
+		}
 		_, certErr := os.Stat(certFile)
 		_, keyErr := os.Stat(keyFile)
 		if certErr == nil && keyErr == nil {
 			useTLS = true
+			if UseConfig {
+				useTLS = config.WebServer.UseSSL
+			}
 		} else {
+			if UseConfig && config.WebServer.UseSSL {
+				if fileExists(config.WebServer.SSLCertPath) && fileExists(config.WebServer.SSLKeyPath) {
+					certFile = config.WebServer.SSLCertPath
+					keyFile = config.WebServer.SSLKeyPath
+				} else {
+					certFile = path.Join(UserHomeDir, "server.crt")
+					keyFile = path.Join(UserHomeDir, "server.key")
+				}
+			}
 			certManager := NewCertManager(certFile, keyFile)
 			if err := certManager.GenerateSelfSignedCert(); err != nil {
-				log.Fatalf("error creating certificate files for webserver: %v", err)
+				fmt.Printf("error creating certificate files for webserver: %v\n", err)
 				fmt.Println("running webserver without encryption!")
 			} else {
 				useTLS = true
+				if UseConfig {
+					useTLS = config.WebServer.UseSSL
+				}
 			}
 		}
 	}
@@ -189,58 +228,55 @@ func NewServer(addr, cert, key string) *Server {
 }
 
 func (s *Server) Start() {
-	http.HandleFunc("/", contentHandler)
-	http.HandleFunc("/login", loginHandler)
-	http.HandleFunc("/logout", logoutHandler)
-	http.HandleFunc("/events", eventsHandler)
-	http.HandleFunc("/change-password", changePasswordHandler)
-	http.HandleFunc("/upload", uploadHandler)
-	http.HandleFunc("/files", fileHandler)
-	http.HandleFunc("/logs", logsHandler)
-	http.HandleFunc("/delete", deleteHandler)
-	http.HandleFunc("/sendMQTT", sendMQTTHandler)
-	http.HandleFunc("/start-stop-status", func(w http.ResponseWriter, r *http.Request) {
-		cookie, err := r.Cookie("session")
-		if err != nil || !sessions[cookie.Value] {
-			sendServerResponseJson("error", "unauthorized", w)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", contentHandler)
+	mux.HandleFunc("/login", loginHandler)
+	mux.HandleFunc("/logout", logoutHandler)
+	mux.HandleFunc("/events", eventsHandler)
+	mux.HandleFunc("/change-password", changePasswordHandler)
+	mux.HandleFunc("/upload", uploadHandler)
+	mux.HandleFunc("/files", fileHandler)
+	mux.HandleFunc("/logs", logsHandler)
+	mux.HandleFunc("/delete", deleteHandler)
+	mux.HandleFunc("/config", configHandler)
+	mux.HandleFunc("/config-update", configUpdateHandler)
+	mux.HandleFunc("/sendMQTT", sendMQTTHandler)
+	mux.HandleFunc("/start-stop-status", func(w http.ResponseWriter, r *http.Request) {
+		if !IsUserLoggedIn(w, r, false) {
 			return
 		}
 		if isDownloadRunning {
-			sendServerResponseJson("isDownloadRunning", "true", w)
+			sendServerResponseJson("isDownloadRunning", "true", w, http.StatusOK)
 		} else {
-			sendServerResponseJson("isDownloadRunning", "false", w)
+			sendServerResponseJson("isDownloadRunning", "false", w, http.StatusOK)
 		}
 	})
-	http.HandleFunc("/stop-downloads", func(w http.ResponseWriter, r *http.Request) {
-		cookie, err := r.Cookie("session")
-		if err != nil || !sessions[cookie.Value] {
-			sendServerResponseJson("error", "unauthorized", w)
+	mux.HandleFunc("/stop-downloads", func(w http.ResponseWriter, r *http.Request) {
+		if !IsUserLoggedIn(w, r, false) {
 			return
 		}
 		if !isDownloadRunning {
-			sendServerResponseJson("error", "there are no aktive downloads to stop!", w)
+			sendServerResponseJson("error", "there are no aktive downloads to stop!", w, http.StatusOK)
 			AddLoaderLog("error: there are no aktive downloads to stop!")
 			return
 		}
-		sendServerResponseJson("success", "stopping all downloads", w)
+		sendServerResponseJson("success", "stopping all downloads", w, http.StatusOK)
 		AddLoaderLog("Stopping all downloads!")
 		if UseMQTT {
 			go SendMQTTMsg("Stopping all downloads!", "command", "stop")
 		}
 		go StopAllFTPDownloads()
 	})
-	http.HandleFunc("/start-downloads", func(w http.ResponseWriter, r *http.Request) {
-		cookie, err := r.Cookie("session")
-		if err != nil || !sessions[cookie.Value] {
-			sendServerResponseJson("error", "unauthorized", w)
+	mux.HandleFunc("/start-downloads", func(w http.ResponseWriter, r *http.Request) {
+		if !IsUserLoggedIn(w, r, false) {
 			return
 		}
 		if isDownloadRunning {
-			sendServerResponseJson("error", "there is an aktive download running!", w)
+			sendServerResponseJson("error", "there is an aktive download running!", w, http.StatusOK)
 			AddLoaderLog("error: there is an aktive download running!")
 			return
 		}
-		sendServerResponseJson("success", "starting all downloads", w)
+		sendServerResponseJson("success", "starting all downloads", w, http.StatusOK)
 		AddLoaderLog("Starting all downloads!")
 		if UseMQTT {
 			SendMQTTMsg("Starting all downloads!", "command", "start")
@@ -260,6 +296,12 @@ func (s *Server) Start() {
 			}
 		}()
 	})
+	http.Handle("/", s.setServerHeaders(mux))
+
+	// add rate limit for more security
+	// limiter := rate.NewLimiter(rate.Every(time.Second/5), 5)
+	limiter := rate.NewLimiter(WWWRateLimit, WWWRateLimit_Times)
+	handler := s.setServerHeaders(rateLimiter(limiter, mux))
 
 	ipAddresses, err := GetIPAddresses()
 	if err != nil {
@@ -275,7 +317,7 @@ func (s *Server) Start() {
 			fmt.Printf("Webserver starting @ https://%s:%d/\n", WWWServerIP, WWWServerPort)
 		}
 		go func() {
-			if err := http.ListenAndServeTLS(s.Addr, filepath.Join(UserHomeDir, s.TLSCert), filepath.Join(UserHomeDir, s.TLSKey), nil); err != nil {
+			if err := http.ListenAndServeTLS(s.Addr, filepath.Join(UserHomeDir, s.TLSCert), filepath.Join(UserHomeDir, s.TLSKey), handler); err != nil {
 				log.Printf("error starting https webserver: %v", err)
 			}
 			s.quitCh <- true
@@ -290,7 +332,7 @@ func (s *Server) Start() {
 			fmt.Printf("Webserver starting @ http://%s:%d/\n", WWWServerIP, WWWServerPort)
 		}
 		go func() {
-			if err := http.ListenAndServe(s.Addr, nil); err != nil {
+			if err := http.ListenAndServe(s.Addr, handler); err != nil {
 				log.Printf("error starting webserver: %v", err)
 			}
 			s.quitCh <- true
@@ -299,71 +341,163 @@ func (s *Server) Start() {
 	}
 }
 
-func sendServerResponseJson(status, message string, w http.ResponseWriter) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+func (s *Server) setServerHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		os := runtime.GOOS
+		w.Header().Set("Server", fmt.Sprintf("goSFDLSauger/%s (%s)", VERSION, os))
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		next.ServeHTTP(w, r)
+	})
+}
+
+func rateLimiter(limiter *rate.Limiter, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !limiter.Allow() {
+			sendServerResponseJson("error", "rate limit exceeded", w, http.StatusTooManyRequests)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func IsUserLoggedIn(w http.ResponseWriter, r *http.Request, bypass bool) bool {
+	cookie, err := r.Cookie("session")
+	if err != nil || cookie.Value == "" {
+		if !bypass {
+			sendServerResponseJson("error", "unauthorized", w, http.StatusUnauthorized)
+		}
+		return false
+	}
+	sessionData, exists := sessions[cookie.Value]
+	if !exists || !sessionData.IsLoggedIn {
+		if !bypass {
+			sendServerResponseJson("error", "unauthorized", w, http.StatusUnauthorized)
+		}
+		return false
+	}
+	return true
+}
+
+func sendServerResponseJson(status, message string, w http.ResponseWriter, statusCode int) {
 	response := ServerResponse{
 		Status:  status,
 		Message: message,
 	}
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(response)
+	w.WriteHeader(statusCode)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, "error sending json encoded response", http.StatusInternalServerError)
+		return
+	}
 }
 
 func contentHandler(w http.ResponseWriter, r *http.Request) {
-	cookie, err := r.Cookie("session")
-	if err != nil || !sessions[cookie.Value] {
+	if !IsUserLoggedIn(w, r, true) {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	cookie, err := r.Cookie("session")
+	if err != nil || cookie.Value == "" {
+		sendServerResponseJson("error", "unauthorized", w, http.StatusUnauthorized)
+		return
+	}
+
+	sessionData, exists := sessions[cookie.Value]
+	if !exists || !sessionData.IsLoggedIn {
+		sendServerResponseJson("error", "unauthorized", w, http.StatusUnauthorized)
 		return
 	}
 
 	contentFS, err := fs.Sub(content, "www")
 	if err != nil {
-		http.Error(w, "error unable to read content", http.StatusInternalServerError)
+		sendServerResponseJson("error", "error unable to read content", w, http.StatusInternalServerError)
 		return
 	}
 
 	if r.URL.Path == "/" {
 		file, err := contentFS.Open("index.html")
 		if err != nil {
-			http.Error(w, "error opening index.html", http.StatusInternalServerError)
+			sendServerResponseJson("error", "error opening index.html", w, http.StatusInternalServerError)
 			return
 		}
 		defer file.Close()
 
 		data, err := io.ReadAll(file)
 		if err != nil {
-			http.Error(w, "error reading index.html", http.StatusInternalServerError)
+			sendServerResponseJson("error", "error reading index.html", w, http.StatusInternalServerError)
 			return
 		}
 
 		w.Header().Set("Content-Type", "text/html")
-		w.Write(data)
+
+		tmpl, err := template.New("index").Parse(string(makeTemplate(data)))
+		if err != nil {
+			sendServerResponseJson("error", "error loading template", w, http.StatusInternalServerError)
+			return
+		}
+
+		tmpl.Execute(w, map[string]interface{}{
+			"CSRFToken": sessionData.CSRFToken,
+			"VERSION":   VERSION,
+		})
+
 		return
 	}
 
 	filePath := r.URL.Path[1:]
 
+	fileNameWithExt := filepath.Base(filePath)
+	fileName := strings.TrimSuffix(fileNameWithExt, filepath.Ext(fileNameWithExt))
+
 	file, err := contentFS.Open(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			http.Error(w, "404 - Page not found!", http.StatusNotFound)
+			sendServerResponseJson("error", "404 - page not found", w, http.StatusNotFound)
 			return
 		}
-		http.Error(w, "error opening the file", http.StatusInternalServerError)
+		sendServerResponseJson("error", "error opening the file", w, http.StatusInternalServerError)
 		return
 	}
 	defer file.Close()
 
 	data, err := io.ReadAll(file)
 	if err != nil {
-		http.Error(w, "error reading file", http.StatusInternalServerError)
+		sendServerResponseJson("error", "error reading file", w, http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", getContentType(filePath))
-	w.Write(data)
+	if strings.HasSuffix(filePath, ".html") ||
+		strings.HasSuffix(filePath, ".htm") ||
+		strings.HasSuffix(filePath, ".tpl") {
+		w.Header().Set("Content-Type", "text/html")
+
+		tmpl, err := template.New(fileName).Parse(string(makeTemplate(data)))
+		if err != nil {
+			sendServerResponseJson("error", "error loading template", w, http.StatusInternalServerError)
+			return
+		}
+
+		tmpl.Execute(w, map[string]interface{}{
+			"CSRFToken": sessionData.CSRFToken,
+			"VERSION":   VERSION,
+		})
+	} else {
+		w.Header().Set("Content-Type", getContentType(filePath))
+		w.Write(data)
+	}
+}
+
+func makeTemplate(data []byte) []byte {
+	re := regexp.MustCompile(`(?i)<title>(.*?)</title>`)
+	matches := re.FindSubmatch(data)
+	if len(matches) > 1 {
+		originalTitle := string(matches[1])
+		newTitle := fmt.Sprintf("%s - goSFDLSauger v%s", originalTitle, VERSION)
+		return re.ReplaceAll(data, []byte("<title>"+newTitle+"</title>"))
+	}
+	reHead := regexp.MustCompile(`(?i)</head>`)
+	dataWithTitle := reHead.ReplaceAll(data, []byte(fmt.Sprintf("<title>goSFDLSauger v%s</title></head>", VERSION)))
+	return dataWithTitle
 }
 
 func loginHandler(w http.ResponseWriter, r *http.Request) {
@@ -372,34 +506,54 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 		if hashPassword(password) == loginData {
 			sessionID, err := generateSessionID()
 			if err != nil {
-				http.Error(w, "error login session", http.StatusInternalServerError)
+				sendServerResponseJson("error", "error login session", w, http.StatusInternalServerError)
 				return
 			}
-			sessions[sessionID] = true
+
+			randomCSRFKey, keyErr := generateRandomPassword(32)
+			if keyErr != nil {
+				sendServerResponseJson("error", "error unable to generate randomCSRFKey", w, http.StatusInternalServerError)
+				return
+			}
+
+			hash := sha256.New()
+			hash.Write([]byte(randomCSRFKey))
+			randomCSRFKey = hex.EncodeToString(hash.Sum(nil))
+
+			sessions[sessionID] = Session{
+				IsLoggedIn: true,
+				CSRFToken:  randomCSRFKey,
+			}
+
 			http.SetCookie(w, &http.Cookie{
-				Name:  "session",
-				Value: sessionID,
-				Path:  "/",
+				Name:     "session",
+				Value:    sessionID,
+				Path:     "/",
+				Secure:   true,
+				SameSite: http.SameSiteNoneMode, // http.SameSiteStrictMode
 			})
+
 			http.Redirect(w, r, "/index.html", http.StatusSeeOther)
 			return
 		}
-		http.Error(w, `{"error": "wrong password"}`, http.StatusUnauthorized)
+		sendServerResponseJson("error", "wrong password", w, http.StatusUnauthorized)
 		return
 	}
 
 	fs, err := content.ReadFile("www/login.html")
 	if err != nil {
-		http.Error(w, "error loading template", http.StatusInternalServerError)
+		sendServerResponseJson("error", "error loading template", w, http.StatusInternalServerError)
 		return
 	}
 
-	tmpl, err := template.New("login").Parse(string(fs))
+	tmpl, err := template.New("login").Parse(string(makeTemplate(fs)))
 	if err != nil {
-		http.Error(w, "error loading template", http.StatusInternalServerError)
+		sendServerResponseJson("error", "error loading template", w, http.StatusInternalServerError)
 		return
 	}
-	tmpl.Execute(w, nil)
+	tmpl.Execute(w, map[string]interface{}{
+		"VERSION": VERSION,
+	})
 }
 
 func logoutHandler(w http.ResponseWriter, r *http.Request) {
@@ -413,13 +567,11 @@ func logoutHandler(w http.ResponseWriter, r *http.Request) {
 			MaxAge: -1,
 		})
 	}
-	http.Redirect(w, r, "/login.html", http.StatusSeeOther)
+	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 
 func eventsHandler(w http.ResponseWriter, r *http.Request) {
-	cookie, err := r.Cookie("session")
-	if err != nil || !sessions[cookie.Value] {
-		sendServerResponseJson("error", "unauthorized", w)
+	if !IsUserLoggedIn(w, r, false) {
 		return
 	}
 
@@ -429,7 +581,7 @@ func eventsHandler(w http.ResponseWriter, r *http.Request) {
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		http.Error(w, "streaming not supported!", http.StatusInternalServerError)
+		sendServerResponseJson("error", "streaming not supported!", w, http.StatusInternalServerError)
 		return
 	}
 
@@ -438,7 +590,7 @@ func eventsHandler(w http.ResponseWriter, r *http.Request) {
 		for _, downloadProgress := range ProgressGlobals {
 			server, err := json.Marshal(downloadProgress)
 			if err != nil {
-				http.Error(w, "failed to encode server data", http.StatusInternalServerError)
+				sendServerResponseJson("error", "failed to encode server data", w, http.StatusInternalServerError)
 				return
 			}
 			fmt.Fprintf(w, "data: {\"server\": %s}\n\n", server)
@@ -449,7 +601,7 @@ func eventsHandler(w http.ResponseWriter, r *http.Request) {
 		for _, progress := range ProgessFiles {
 			files, err := json.Marshal(progress)
 			if err != nil {
-				http.Error(w, "failed to encode files data", http.StatusInternalServerError)
+				sendServerResponseJson("error", "failed to encode files data", w, http.StatusInternalServerError)
 				return
 			}
 			fmt.Fprintf(w, "data: {\"files\": %s}\n\n", files)
@@ -460,7 +612,7 @@ func eventsHandler(w http.ResponseWriter, r *http.Request) {
 		for _, log := range DownloadLogs {
 			logs, err := json.Marshal(log)
 			if err != nil {
-				http.Error(w, "failed to encode logs data", http.StatusInternalServerError)
+				sendServerResponseJson("error", "failed to encode logs data", w, http.StatusInternalServerError)
 				return
 			}
 			fmt.Fprintf(w, "data: {\"logs\": %s}\n\n", logs)
@@ -472,16 +624,14 @@ func eventsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func logsHandler(w http.ResponseWriter, r *http.Request) {
-	cookie, err := r.Cookie("session")
-	if err != nil || !sessions[cookie.Value] {
-		sendServerResponseJson("error", "unauthorized", w)
+	if !IsUserLoggedIn(w, r, false) {
 		return
 	}
 
 	for _, log := range LoaderLogs {
 		logs, err := json.Marshal(log)
 		if err != nil {
-			http.Error(w, "failed to encode logs data", http.StatusInternalServerError)
+			sendServerResponseJson("error", "failed to encode logs data", w, http.StatusInternalServerError)
 			return
 		}
 		fmt.Fprintf(w, "data: {\"logs\": %s}\n\n", logs)
@@ -489,55 +639,92 @@ func logsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func changePasswordHandler(w http.ResponseWriter, r *http.Request) {
+	if !IsUserLoggedIn(w, r, false) {
+		return
+	}
+
 	cookie, err := r.Cookie("session")
-	if err != nil || !sessions[cookie.Value] {
-		sendServerResponseJson("error", "unauthorized", w)
+	if err != nil || cookie.Value == "" {
+		sendServerResponseJson("error", "unauthorized", w, http.StatusUnauthorized)
+		return
+	}
+
+	sessionData, exists := sessions[cookie.Value]
+	if !exists || !sessionData.IsLoggedIn {
+		sendServerResponseJson("error", "unauthorized", w, http.StatusUnauthorized)
 		return
 	}
 
 	if r.Method == http.MethodPost {
-		oldPassword := r.FormValue("old-password")
-		newPassword := r.FormValue("new-password")
-		confirmPassword := r.FormValue("confirm-password")
+		oldPassword := r.FormValue("oldPASS")
+		newPassword := r.FormValue("newPASS")
+		confirmPassword := r.FormValue("conPASS")
+
+		csrfToken := r.Header.Get("X-CSRF-Token")
+		if csrfToken != sessionData.CSRFToken {
+			sendServerResponseJson("error", "unauthorized", w, http.StatusUnauthorized)
+			return
+		}
+
+		if oldPassword == newPassword {
+			sendServerResponseJson("error", "old and new password is the same", w, http.StatusBadRequest)
+			return
+		}
 
 		if newPassword != confirmPassword {
-			http.Error(w, "New passwords do not match", http.StatusBadRequest)
+			sendServerResponseJson("error", "new passwords do not match", w, http.StatusBadRequest)
 			return
 		}
 
 		if hashPassword(oldPassword) != loginData {
-			http.Error(w, "Old password is incorrect", http.StatusUnauthorized)
+			sendServerResponseJson("error", "old password is incorrect", w, http.StatusBadRequest)
 			return
 		}
 
 		err := setNewPassword(newPassword)
 		if err != nil {
-			http.Error(w, "Set new password error: "+err.Error(), http.StatusMethodNotAllowed)
+			sendServerResponseJson("error", "Set new password error: "+err.Error(), w, http.StatusInternalServerError)
 		}
 
 		loginData = hashPassword(newPassword)
 
-		fmt.Fprintf(w, "Password successfully changed!")
+		sendServerResponseJson("success", "password successfully changed!", w, http.StatusOK)
 	} else {
-		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+		sendServerResponseJson("error", "invalid request method", w, http.StatusBadRequest)
 	}
 }
 
 func uploadHandler(w http.ResponseWriter, r *http.Request) {
+	if !IsUserLoggedIn(w, r, false) {
+		return
+	}
+
 	cookie, err := r.Cookie("session")
-	if err != nil || !sessions[cookie.Value] {
-		sendServerResponseJson("error", "unauthorized", w)
+	if err != nil || cookie.Value == "" {
+		sendServerResponseJson("error", "unauthorized", w, http.StatusUnauthorized)
+		return
+	}
+
+	sessionData, exists := sessions[cookie.Value]
+	if !exists || !sessionData.IsLoggedIn {
+		sendServerResponseJson("error", "unauthorized", w, http.StatusUnauthorized)
 		return
 	}
 
 	if r.Method != http.MethodPost {
-		sendServerResponseJson("error", "invalid request method", w)
+		sendServerResponseJson("error", "invalid request method", w, http.StatusBadRequest)
+		return
+	}
+
+	csrfToken := r.Header.Get("X-CSRF-Token")
+	if csrfToken != sessionData.CSRFToken {
+		sendServerResponseJson("error", "unauthorized", w, http.StatusUnauthorized)
 		return
 	}
 
 	err = r.ParseMultipartForm(10 << 20) // max 10 MB
 	if err != nil {
-		sendServerResponseJson("error", "error parsing upload form", w)
+		sendServerResponseJson("error", "error parsing upload form", w, http.StatusBadRequest)
 		return
 	}
 
@@ -545,25 +732,25 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 	for _, fileHeader := range files {
 		file, err := fileHeader.Open()
 		if err != nil {
-			sendServerResponseJson("error", "error opening file", w)
+			sendServerResponseJson("error", "error opening file", w, http.StatusInternalServerError)
 			return
 		}
 		defer file.Close()
 
 		if err := os.MkdirAll(filepath.Join(UserDownloadDir, "/sfdl_files"), os.ModePerm); err != nil {
-			sendServerResponseJson("error", "error creating directory for sfdl files", w)
+			sendServerResponseJson("error", "error creating directory for sfdl files", w, http.StatusInternalServerError)
 			return
 		}
 
 		dst, err := os.Create(filepath.Join(UserDownloadDir, "/sfdl_files") + "/" + fileHeader.Filename)
 		if err != nil {
-			sendServerResponseJson("error", "error creating sfdl file", w)
+			sendServerResponseJson("error", "error creating sfdl file", w, http.StatusInternalServerError)
 			return
 		}
 		defer dst.Close()
 
 		if _, err := io.Copy(dst, file); err != nil {
-			sendServerResponseJson("error", "error saving sfdl data", w)
+			sendServerResponseJson("error", "error saving sfdl data", w, http.StatusInternalServerError)
 			return
 		}
 
@@ -584,9 +771,7 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func fileHandler(w http.ResponseWriter, r *http.Request) {
-	cookie, err := r.Cookie("session")
-	if err != nil || !sessions[cookie.Value] {
-		http.Redirect(w, r, "/login", http.StatusSeeOther)
+	if !IsUserLoggedIn(w, r, false) {
 		return
 	}
 
@@ -598,15 +783,39 @@ func fileHandler(w http.ResponseWriter, r *http.Request) {
 	dlVar := r.URL.Query().Get("dl")
 	webDlFile := strings.TrimPrefix(dlVar, "/files?dl=")
 
+	csrfVar := r.URL.Query().Get("csrf")
+	csrfString := strings.TrimPrefix(csrfVar, "&csrf=")
+
+	cookie, err := r.Cookie("session")
+	if err != nil || cookie.Value == "" {
+		sendServerResponseJson("error", "unauthorized", w, http.StatusUnauthorized)
+		return
+	}
+
+	sessionData, exists := sessions[cookie.Value]
+	if !exists || !sessionData.IsLoggedIn {
+		sendServerResponseJson("error", "unauthorized", w, http.StatusUnauthorized)
+		return
+	}
+
 	// download file
 	if webDlFile != "" {
-		filePath := baseDir + webDlFile
+		if sessionData.CSRFToken != csrfString {
+			sendServerResponseJson("error", "unauthorized", w, http.StatusUnauthorized)
+			return
+		}
+		filePath := filepath.Join(baseDir, webDlFile)
 		downloadHandler(w, r, filePath, filepath.Base(webDlFile))
+	}
+
+	if relativePath != "" && sessionData.CSRFToken != csrfString {
+		sendServerResponseJson("error", "unauthorized", w, http.StatusUnauthorized)
+		return
 	}
 
 	files, err := listFiles(baseDir, relativePath)
 	if err != nil {
-		http.Error(w, "error reading (relativePath): "+relativePath, http.StatusInternalServerError)
+		sendServerResponseJson("error", "error reading (relativePath): "+relativePath, w, http.StatusInternalServerError)
 		return
 	}
 
@@ -622,13 +831,13 @@ func fileHandler(w http.ResponseWriter, r *http.Request) {
 
 	tmplContent, err := content.ReadFile("www/filetree.html")
 	if err != nil {
-		http.Error(w, "error reading template", http.StatusInternalServerError)
+		sendServerResponseJson("error", "error reading template", w, http.StatusInternalServerError)
 		return
 	}
 
-	tmpl, err := template.New("filetree").Parse(string(tmplContent))
+	tmpl, err := template.New("filetree").Parse(string(makeTemplate(tmplContent)))
 	if err != nil {
-		http.Error(w, fmt.Sprintf("error creating template: %v", err), http.StatusInternalServerError)
+		sendServerResponseJson("error", fmt.Sprintf("error creating template: %v", err), w, http.StatusInternalServerError)
 		return
 	}
 
@@ -646,15 +855,19 @@ func fileHandler(w http.ResponseWriter, r *http.Request) {
 		Files     []File
 		Path      string
 		PathParts []string
+		CSRFToken string
+		VERSION   string
 	}{
 		Files:     fileList,
 		Path:      relativePath,
 		PathParts: filteredPathParts,
+		CSRFToken: sessionData.CSRFToken,
+		VERSION:   VERSION,
 	}
 
 	err = tmpl.Execute(w, data)
 	if err != nil {
-		http.Error(w, "error rendering template", http.StatusInternalServerError)
+		sendServerResponseJson("error", "error rendering template", w, http.StatusInternalServerError)
 		return
 	}
 }
@@ -685,10 +898,27 @@ func deleteFileOrDir(path string) error {
 }
 
 func deleteHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	if !IsUserLoggedIn(w, r, false) {
+		return
+	}
+
+	csrfVar := r.URL.Query().Get("csrf")
+	csrfString := strings.TrimPrefix(csrfVar, "&csrf=")
+
 	cookie, err := r.Cookie("session")
-	if err != nil || !sessions[cookie.Value] {
-		sendServerResponseJson("error", "unauthorized", w)
+	if err != nil || cookie.Value == "" {
+		sendServerResponseJson("error", "unauthorized", w, http.StatusUnauthorized)
+		return
+	}
+
+	sessionData, exists := sessions[cookie.Value]
+	if !exists || !sessionData.IsLoggedIn {
+		sendServerResponseJson("error", "unauthorized", w, http.StatusUnauthorized)
+		return
+	}
+
+	if csrfString != sessionData.CSRFToken {
+		sendServerResponseJson("error", "unauthorized", w, http.StatusUnauthorized)
 		return
 	}
 
@@ -696,53 +926,47 @@ func deleteHandler(w http.ResponseWriter, r *http.Request) {
 	path = DestinationDownloadPath + path
 
 	if path == "" {
-		sendServerResponseJson("error", "a valid path is required", w)
+		sendServerResponseJson("error", "a valid path is required", w, http.StatusBadRequest)
 		return
 	}
 
 	err = deleteFileOrDir(path)
 	if err != nil {
-		sendServerResponseJson("error", fmt.Sprintf("Error deleting file: %v", err), w)
+		sendServerResponseJson("error", fmt.Sprintf("Error deleting file: %v", err), w, http.StatusInternalServerError)
 		return
 	}
 
-	sendServerResponseJson("success", fmt.Sprintf("%s deleted successfully!", path), w)
+	sendServerResponseJson("success", fmt.Sprintf("%s deleted successfully!", path), w, http.StatusOK)
 }
 
 func sendMQTTHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	cookie, err := r.Cookie("session")
-	if err != nil || !sessions[cookie.Value] {
-		sendServerResponseJson("error", "unauthorized", w)
+	if !IsUserLoggedIn(w, r, false) {
 		return
 	}
 
 	if !UseMQTT {
-		sendServerResponseJson("error", "MQTT not available, no broker was set!", w)
+		sendServerResponseJson("error", "MQTT not available, no broker was set!", w, http.StatusInternalServerError)
 		return
 	}
 
 	message := r.URL.Query().Get("mqttmsg")
 
 	if message == "" {
-		sendServerResponseJson("error", "a massage (empty) is required", w)
+		sendServerResponseJson("error", "a massage (empty) is required", w, http.StatusBadRequest)
 		return
 	}
 
 	msgerr := SendMQTTMsg(message)
 	if msgerr != nil {
-		sendServerResponseJson("error", "error sending MQTT message: "+message+" | "+fmt.Sprintf("error: %s", msgerr), w)
+		sendServerResponseJson("error", "error sending MQTT message: "+message+" | "+fmt.Sprintf("error: %s", msgerr), w, http.StatusInternalServerError)
 		return
 	}
 
-	sendServerResponseJson("success", "MQTT broker got your message: "+message, w)
+	sendServerResponseJson("success", "MQTT broker got your message: "+message, w, http.StatusOK)
 }
 
 func downloadHandler(w http.ResponseWriter, r *http.Request, filePath, fileName string) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	cookie, err := r.Cookie("session")
-	if err != nil || !sessions[cookie.Value] {
-		sendServerResponseJson("error", "unauthorized", w)
+	if !IsUserLoggedIn(w, r, false) {
 		return
 	}
 
@@ -869,6 +1093,15 @@ func (cm *CertManager) GenerateSelfSignedCert() error {
 		return fmt.Errorf("error unable to write key: %v", err)
 	}
 
+	if UseConfig {
+		config.WebServer.SSLCertPath = cm.CertFile
+		config.WebServer.SSLKeyPath = cm.KeyFile
+		err := saveConfig(CONFIG_File)
+		if err != nil {
+			fmt.Println("error saving config file while updating cert and key files:", err)
+		}
+	}
+
 	fmt.Printf("New %s created!\n", cm.CertFile)
 	fmt.Printf("New %s created!\n", cm.KeyFile)
 	return nil
@@ -983,7 +1216,7 @@ func GoWebserver(serverPORT int, serverIP string) {
 	}
 
 	if UserHomeDir != "." {
-		UserHomeDir = filepath.Join(UserHomeDir + "/goSFDLSauger")
+		UserHomeDir = filepath.Join(UserHomeDir, "/goSFDLSauger")
 	}
 
 	homeDir, err := os.UserHomeDir()
@@ -993,7 +1226,7 @@ func GoWebserver(serverPORT int, serverIP string) {
 	}
 
 	if UserDownloadDir == "" {
-		UserDownloadDir = filepath.Join(homeDir + "/Downloads")
+		UserDownloadDir = filepath.Join(homeDir, "/Downloads")
 		_, err := os.Stat(UserDownloadDir)
 		if os.IsNotExist(err) {
 			UserDownloadDir = ""
